@@ -26,6 +26,12 @@ class IsaacSim(Interface):
         self.q = np.zeros(self.robot_config.N_JOINTS)  # joint angles
         self.dq = np.zeros(self.robot_config.N_JOINTS)  # joint_velocities
 
+        self.robot_model = None
+        self.urdf_path = None
+        self.import_config = None
+        self.world = None
+
+        
         #self.misc_handles = {}  # for tracking miscellaneous object handles
 
         '''
@@ -37,22 +43,22 @@ class IsaacSim(Interface):
         
 
     def connect(self, load_scene=True):
-        """All initial setup."""
-        self.simulation_app = SimulationApp({"headless": False}) 
-        from isaacsim.core.api import World # type: ignore
-        from isaacsim.core.utils.extensions import get_extension_path_from_name # type: ignore
-        from isaacsim.asset.importer.urdf import _urdf # type: ignore
-        import omni.kit.commands # type: ignore
-        import omni.usd # type: ignore
 
-        self.robot_model = None
-        self.urdf_path = None
-        self.import_config = None
-        self.world = None
+        
         if load_scene:
+            """All initial setup."""
+            self.simulation_app = SimulationApp({"headless": False}) 
+            from isaacsim.core.api import World # type: ignore
+            from isaacsim.core.api.objects import DynamicCuboid # type: ignore
+            from isaacsim.core.utils.extensions import get_extension_path_from_name # type: ignore
+            from isaacsim.asset.importer.urdf import _urdf # type: ignore
+            import omni.kit.commands # type: ignore
+            import omni.usd # type: ignore
+            import omni
             # Create a world
             self.world = World(physics_dt=self.dt,rendering_dt=self.dt)
             self.world.scene.add_default_ground_plane()
+
 
             # Acquire the URDF extension interface for parsing and importing URDF files
             urdf_interface = _urdf.acquire_urdf_interface()
@@ -65,6 +71,7 @@ class IsaacSim(Interface):
             self.import_config.self_collision = False  # Disable self-collision for performance
             self.import_config.distance_scale = 1     # Set distance scale for the robot
             self.import_config.density = 0.0          # Set density to 0 (use default values)
+
 
             # Retrieve the path of the URDF file from the extension
             extension_path = get_extension_path_from_name("isaacsim.asset.importer.urdf")
@@ -82,27 +89,36 @@ class IsaacSim(Interface):
             # Resetting the world needs to be called before querying anything related to an articulation specifically.
             # Its recommended to always do a reset after adding your assets, for physics handles to be propagated properly
             self.world.reset()
+
+
+        else:
+            self.world = SimulationApp.getWorld()
             
+
         # Get the articulation
         from omni.isaac.core.articulations import Articulation, ArticulationSubset # type: ignore
-        from omni.isaac.core.utils.types import ArticulationAction # type: ignore
         import omni.isaac.core.utils.stage as stage_utils # type: ignore
 
         # Import the robot onto the current stage and retrieve its prim path
-        result, prim_path = omni.kit.commands.execute(
+        result, prim_path_ur = omni.kit.commands.execute(
             "URDFImportRobot",
             urdf_robot=self.robot_model,
             import_config=self.import_config,
             )
-        print("result: ", result)
-
+        
+        # necessary so self.q and self.dq are accessible
         self.world.initialize_physics()
 
         # Load robot
-        self.articulation = Articulation(prim_path=prim_path, name="ur10")
+        self.articulation = Articulation(prim_path=prim_path_ur, name="ur10")
         self.articulation.initialize()
         
+
         print("Started Isaacsim as stand alone app...")
+
+
+
+
 
     def disconnect(self):
         """Any socket closing etc that must be done to properly shut down"""
@@ -118,17 +134,11 @@ class IsaacSim(Interface):
         u : np.array
             An array of joint torques [Nm]
         """
-
         # Apply some torque
-        #TODO : replace with actual torque values
-        torque = [1.0] * len(q)  
-        self.articulation.add_torque(torque)
+        self.articulation.set_joint_efforts(u)
 
-        # Step the simulation
-        from omni.physx import _physx # type: ignore
-        _physx.step()
-
-
+         # move simulation ahead one time step
+        self.world.step(render=True) # execute one physics step and one rendering step
 
 
 
@@ -139,10 +149,11 @@ class IsaacSim(Interface):
             the target joint angles [radians]
         """
         # Set the target angles for the joints
-        self.articulation.set_joint_positions(q)
-        return
+        from isaacsim.core.utils.types import ArticulationAction # type: ignore
+        self.articulation.get_articulation_controller().apply_action(ArticulationAction(q))
 
-
+        # move simulation ahead one time step
+        self.world.step(render=True) # execute one physics step and one rendering step
 
 
     def get_feedback(self):
@@ -155,3 +166,16 @@ class IsaacSim(Interface):
         self.q = self.articulation.get_joint_positions()
         self.dq = self.articulation.get_joint_velocities()
         return {"q": self.q, "dq": self.dq}
+
+
+    def get_xyz(self, name):
+                """Returns the xyz position of the specified object
+
+                name : string
+                    name of the object you want the xyz position of
+                """
+                #TODO check if we need misc handles for this
+                obj = self.world.scene.get_object(name) 
+                object_position, object_orientation = obj.get_world_pose()
+
+                return object_position
