@@ -49,5 +49,6 @@ class FlyingCube():
         linear_velocity = self._cube.get_linear_velocity()
         return np.concatenate([position, linear_velocity, orientation], axis=0)
     
-    def _get_obj_pose(self):
-        return self._cube.get_world_pose()
+    def _get_obj_pos(self):
+        position, orientation = self._cube.get_world_pose()
+        return position
