@@ -105,8 +105,10 @@ class IsaacSim(Interface):
         u : np.array
             An array of joint torques [Nm]
         """
-        # Apply some torque
-        self.articulation.set_joint_efforts(u)
+        # Apply the control signal
+        #self.articulation.set_joint_efforts(u)
+        #self.robot.set_joint_efforts(u)
+        self.robot.set_joint_efforts(u)
 
          # move simulation ahead one time step
         self.world.step(render=True) # execute one physics step and one rendering step
@@ -119,8 +121,10 @@ class IsaacSim(Interface):
         q : numpy.array
             the target joint angles [radians]
         """
+        print("robot joint pos: ", self.robot.get_joint_positions())
+        print("q: ", q)
         self.robot.set_joint_positions(q)
-
+        
         # move simulation ahead one time step
         self.world.step(render=True) # execute one physics step and one rendering step
 
@@ -149,3 +153,32 @@ class IsaacSim(Interface):
                 object_position, object_orientation = obj.get_world_pose()
 
                 return object_position
+    
+
+    def get_orientation(self, name):
+        """Returns the orientation of an object in CoppeliaSim
+
+        the Euler angles [radians] are returned in the relative xyz frame.
+        http://www.coppeliarobotics.com/helpFiles/en/eulerAngles.htm
+
+        Parameters
+        ----------
+        name : string
+            the name of the object of interest
+        """
+
+        obj = self.world.scene.get_object(name) 
+        object_position, object_orientation = obj.get_world_pose()
+        return object_orientation
+
+
+    def set_xyz(self, name, xyz):
+        """Set the position of an object in the environment.
+
+        name : string
+            the name of the object
+        xyz : np.array
+            the [x,y,z] location of the target [meters]
+        """
+        _cube = self.world.scene.get_object(name)
+        _cube.set_world_pose(xyz, np.array([0., 0., 0., 1.])) # set the position and orientation of the object
