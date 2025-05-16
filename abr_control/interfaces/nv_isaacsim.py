@@ -1,8 +1,7 @@
 import numpy as np
-import os
 from isaacsim import SimulationApp
 from .interface import Interface
-from abr_control.utils import download_meshes, transformations
+
 
 class IsaacSim(Interface):
     """An interface for IsaacSim.
@@ -16,7 +15,7 @@ class IsaacSim(Interface):
         simulation time step in seconds
 
     """
-    def __init__(self, robot_config, dt=0.001):
+    def __init__(self, robot_config, dt=0.001, force_download=False):
 
         super().__init__(robot_config)
         self.dt = dt  # time step
@@ -25,70 +24,73 @@ class IsaacSim(Interface):
         self.q = np.zeros(self.robot_config.N_JOINTS)  # joint angles
         self.dq = np.zeros(self.robot_config.N_JOINTS)  # joint_velocities
 
-        self.import_config = None
-        self.world = None
-        self.prim_path = None
-        self.robot = None
-        self.ai_link = None
-        #self.misc_handles = {}  # for tracking miscellaneous object handles
+        self.prim_path = "/World/robot"
+        self.name = "robot"
 
-        '''
-        # joint target velocities, as part of the torque limiting control
-        # these need to be super high so that the joints are always moving
-        # at the maximum allowed torque
-        self.joint_target_velocities = np.ones(robot_config.N_JOINTS) * 10000.0
-        '''
+      
+        #self.misc_handles = {}  # for tracking miscellaneous object handles
         
 
-    def connect(self, load_scene=True, force_download=False):
+    def connect(self, load_scene=True):
         if load_scene:
             """All initial setup."""
             self.simulation_app = SimulationApp({"headless": False}) 
             from isaacsim.core.api import World # type: ignore
-            from isaacsim.asset.importer.urdf import _urdf # type: ignore
-            from omni.isaac.core.robots.robot import Robot # type: ignore
-            from omni.isaac.core.utils.stage import add_reference_to_stage # type: ignore
+            import omni.isaac.core.utils.stage as stage_utils  # type: ignore   
             import omni.kit.commands # type: ignore
             import omni
+            from isaacsim.robot.policy.examples.robots.h1 import H1FlatTerrainPolicy
+            from isaacsim.storage.native import get_assets_root_path
+
+
             # Create a world
             self.world = World(physics_dt=self.dt,rendering_dt=self.dt)
+            self.stage = omni.usd.get_context().get_stage()
+            self.world.add_physics_callback("send_actions", self.send_actions)
             self.world.scene.add_default_ground_plane()
             
-            # setting up import configuration:
-            status, import_config = omni.kit.commands.execute("MJCFCreateImportConfig")
-            import_config.set_fix_base(False)
-            import_config.set_make_default_prim(False)
+        
 
-            file_name = self.robot_config.filename.split(".")[0]
-            self.xml_file = os.path.join( f"{file_name}.xml")
-
-            omni.kit.commands.execute(
-                "MJCFCreateAsset",
-                mjcf_path=self.xml_file,
-                import_config=import_config,
-                prim_path="/UR5"
+            assets_root_path = get_assets_root_path()
+            
+            
+            self.h1 = H1FlatTerrainPolicy(
+                prim_path=self.prim_path,
+                name=self.name,
+                usd_path=assets_root_path + "/Isaac/Robots/Unitree/H1/h1.usd",
+                position=np.array([0, 0, 1.05]),
             )
-           
+            stage_utils.add_reference_to_stage(
+            usd_path=assets_root_path + "/Isaac/Robots/Unitree/H1/h1.usd",
+            prim_path=self.prim_path,
+        )
 
         else:
             self.world = SimulationApp.getWorld()
             
         # Get the articulation
-        from omni.isaac.core.articulations import Articulation, ArticulationSubset # type: ignore
-
+        from omni.isaac.core.articulations import Articulation# type: ignore
         import omni.isaac.core.utils.stage as stage_utils # type: ignore
        
         # Resetting the world needs to be called before querying anything related to an articulation specifically.
         # Its recommended to always do a reset after adding your assets, for physics handles to be propagated properly
+     
+
         self.world.reset()
+        # Load robot
+        self.articulation = Articulation(prim_path=self.prim_path, name=self.name)
+        self.articulation.initialize()
+        print("DOF names:", self.articulation.dof_names)
+
+        
         # necessary so self.q and self.dq are accessible
         self.world.initialize_physics()
 
-       
-        # Load robot
-        #self.articulation = Articulation(prim_path=self.prim_path, name="ur5")
-        #self.articulation.initialize()
-        #print("DOF names:", self.articulation.dof_names)
+        
+
+
+        
+
 
 
 
@@ -129,8 +131,17 @@ class IsaacSim(Interface):
         
 
         # works well 
-        #self.articulation.set_joint_positions(q)
-
+        self.articulation.set_joint_positions(q)
+        '''
+        tar = np.zeros(17) 
+        self.articulation.set_joint_positions(tar)
+        
+        self.articulation.set_joint_positions([0., 0., 0., 0.,
+                                               0., 0., 0., 0.,
+                                               0., 0., 0., 0.,
+                                               0., 0., 0., 0.,
+                                               0., 0., 0., 0.])
+        '''
 
         # works but just sets robot abruptly to the target angles
         #self.robot.set_joint_positions(q)
@@ -149,17 +160,36 @@ class IsaacSim(Interface):
         self.world.step(render=True) # execute one physics step and one rendering step
 
 
-
-    def get_feedback(self):
+    
+    def get_feedback(self, arm_only=True):
         """Return a dictionary of information needed by the controller.
 
         Returns the joint angles and joint velocities in [rad] and [rad/sec],
         respectively
         """
         # Get the joint angles and velocities
-        #self.q = self.articulation.get_joint_positions()
-        #self.dq = self.articulation.get_joint_velocities()
-        #return {"q": self.q, "dq": self.dq}
+        q = self.articulation.get_joint_positions()
+        dq = self.articulation.get_joint_velocities()
+
+        # get all 12 DOF of the robot
+        if arm_only == False:
+            self.q = q
+            self.dq = dq
+        else:
+            # only get the DOF of the (right) arm
+            self.q[0] = q[6]    # right_shoulder_pitch_joint            
+            self.q[1] = q[10]   # right_shoulder_roll_joint 
+            self.q[2] = q[14]   # right_shoulder_yaw_joint
+            self.q[3] = q[18]   # right_elbow_joint
+
+            self.dq[0] = dq[6]    # right_shoulder_pitch_joint            
+            self.dq[1] = dq[10]   # right_shoulder_roll_joint 
+            self.dq[2] = dq[14]   # right_shoulder_yaw_joint
+            self.dq[3] = dq[18]   # right_elbow_joint
+
+        return {"q": self.q, "dq": self.dq}
+        
+
 
 
     def get_xyz(self, name):
@@ -202,3 +232,14 @@ class IsaacSim(Interface):
         """
         _cube = self.world.scene.get_object(name)
         _cube.set_world_pose(xyz, np.array([0., 0., 0., 1.])) # set the position and orientation of the object
+
+
+
+    # method for keep_standing
+    def send_actions(self, dt):
+        pelvis_prim_path = '/World/robot/pelvis'
+        from pxr import Gf  # type: ignore    
+        prim=self.stage.GetPrimAtPath(pelvis_prim_path)
+        prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0 ,0.0 ,0.0 ,0.0))
+        #prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(0.70711 ,0.70711 ,0.0 ,0.0))
+    
