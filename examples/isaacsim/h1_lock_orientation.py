@@ -19,17 +19,23 @@ dt = 0.001
 interface = IsaacSim(robot_config, dt=dt)
 interface.connect()
 
+feedback = interface.get_feedback()
+q=feedback["q"]
+
+interface.send_target_angles(q)
 
 try:
     print("\nSimulation starting...")
     count = 0
     while 1:
         
-        feedback = interface.get_feedback(arm_only=False)
+        feedback = interface.get_feedback()
         q=feedback["q"]
         #print("Q: ", q)
 
         interface.send_target_angles(q)
+        #interface.world.step(render=True) # execute one physics step and one rendering step
+
         count += 1
 
 

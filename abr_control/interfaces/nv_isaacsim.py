@@ -124,40 +124,38 @@ class IsaacSim(Interface):
         """Moves the arm to the specified joint angles
 
         q : numpy.array
-            the target joint angles [radians]
+                the target joint angles [radians]
         """
-        # print("robot joint pos: ", self.robot.get_joint_positions())
-        #print("q: ", q)
+        #TODO make more general, with flag
+        #TODO use same flag for jaco2 and H1
         
-
-        # works well 
-        self.articulation.set_joint_positions(q)
-        '''
-        tar = np.zeros(17) 
-        self.articulation.set_joint_positions(tar)
-        
-        self.articulation.set_joint_positions([0., 0., 0., 0.,
-                                               0., 0., 0., 0.,
-                                               0., 0., 0., 0.,
-                                               0., 0., 0., 0.,
-                                               0., 0., 0., 0.])
-        '''
-
-        # works but just sets robot abruptly to the target angles
-        #self.robot.set_joint_positions(q)
-        
-        
-        # WORKS AND MOVES ROBOT SLOWLY, issues with time import
-        from omni.isaac.core.utils.types import ArticulationAction # type: ignore
-        #self.articulation.apply_action(ArticulationAction(q))
-        #self.articulation.apply_action(ArticulationAction(np.array([1.0, 0.0,2.0,3.0,0.0,0.0])))
-
-
-
-
-        #dof_ptr = self.dci.find_articulation_dof(art, "panda_joint2")
+        print("LENGTH q:",  len(q))
+        # full jaco2 arm with hand DOF
+        if np.size(q) == 12:
+            self.articulation.set_joint_positions(q)
+        # full H1 body with all DOF
+        if np.size(q) == 19:
+            self.articulation.set_joint_positions(q)
+        # only jaco2 arm
+        if np.size(q) == 6:
+            fb = self.get_feedback(with_hand=True)
+            fb_q = fb["q"]
+            fb_q[:6] = q
+            self.articulation.set_joint_positions(fb_q)
+            # only H1 right arm
+        if np.size(q) == 4:
+            fb = self.get_feedback(arm_only=False)
+            fb_q = fb["q"]
+            fb_q [6] = q[0]    # right_shoulder_pitch_joint            
+            fb_q [10] = q[1]   # right_shoulder_roll_joint 
+            fb_q [14] = q[2]   # right_shoulder_yaw_joint
+            fb_q [18] = q[3]   # right_elbow_joint
+            self.articulation.set_joint_positions(fb_q)
+        else:
+            print("The method send_target_angles of the isaacsim interface does not support the number of joint angles that are attempted to be set.")
         # move simulation ahead one time step
         self.world.step(render=True) # execute one physics step and one rendering step
+ 
 
 
     
@@ -171,25 +169,26 @@ class IsaacSim(Interface):
         q = self.articulation.get_joint_positions()
         dq = self.articulation.get_joint_velocities()
 
-        # get all 12 DOF of the robot
+        # get all DOF of the robot
         if arm_only == False:
             self.q = q
             self.dq = dq
+        # get only DOF of the arm
         else:
-            # only get the DOF of the (right) arm
-            self.q[0] = q[6]    # right_shoulder_pitch_joint            
-            self.q[1] = q[10]   # right_shoulder_roll_joint 
-            self.q[2] = q[14]   # right_shoulder_yaw_joint
-            self.q[3] = q[18]   # right_elbow_joint
-
-            self.dq[0] = dq[6]    # right_shoulder_pitch_joint            
-            self.dq[1] = dq[10]   # right_shoulder_roll_joint 
-            self.dq[2] = dq[14]   # right_shoulder_yaw_joint
-            self.dq[3] = dq[18]   # right_elbow_joint
-
+            tmp = np.zeros(4)  
+            tmp[0] = q[6]    # right_shoulder_pitch_joint            
+            tmp[1] = q[10]   # right_shoulder_roll_joint 
+            tmp[2] = q[14]   # right_shoulder_yaw_joint
+            tmp[3] = q[18]   # right_elbow_joint
+            self.q = tmp
+            
+            tmp[0] = dq[6]    # right_shoulder_pitch_joint            
+            tmp[1] = dq[10]   # right_shoulder_roll_joint 
+            tmp[2] = dq[14]   # right_shoulder_yaw_joint
+            tmp[3] = dq[18]   # right_elbow_joint
+            self.dq = tmp
         return {"q": self.q, "dq": self.dq}
         
-
 
 
     def get_xyz(self, name):
