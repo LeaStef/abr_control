@@ -38,23 +38,21 @@ class Config(BaseConfig):
         self.JOINT_NAMES = [f"H1_right_arm_joint{ii}" for ii in range(self.N_JOINTS)]
 
         # for the null space controller, keep arm near these angles
+        #self.START_ANGLES = np.array(
+        #    [np.pi / 4.0, np.pi / 4.0, np.pi / 4.0, np.pi / 4.0], dtype="float32"
+        #)
         self.START_ANGLES = np.array(
-            [np.pi / 4.0, np.pi / 4.0, np.pi / 4.0, np.pi / 4.0], dtype="float32"
+            [0.0,  0.0,  0.0,  0.0], dtype="float32"
         )
 
 	# TODO adapt this
         # create the inertia matrices for each link of the three joint
-        
-        
-        
-        
         # TODO: identify the actual values for these links
         self._M_LINKS.append(sp.zeros(6, 6))  # link0
-        self._M_LINKS.append(sp.diag(1.98, 1.98, 1.98, 0.0, 0.0, 10.0))  # link1
-        self._M_LINKS.append(sp.diag(1.32, 1.32, 1.32, 0.0, 0.0, 10.0))  # link2
-        self._M_LINKS.append(sp.diag(0.8, 0.8, 0.8, 0.0, 0.0, 10.0))  # link3
-        #TODO LS vals in next line
-        self._M_LINKS.append(sp.diag(0.8, 0.8, 0.8, 0.0, 0.0, 10.0))  # link4
+        self._M_LINKS.append(sp.diag(0.001, 0.0, 0.0, 0.001, 0.0, 0.001))   # link1 - right_shoulder_pitch_link
+        self._M_LINKS.append(sp.diag(0.002, 0.0, 0.0, 0.002, 0.0, 0.001))   # link2 - right_shoulder_roll_link
+        self._M_LINKS.append(sp.diag(0.004, 0.0, 0.0, 0.004, 0.0, 0.0))     # link3 - right_shoulder_yaw_link
+        self._M_LINKS.append(sp.diag(0.0, 0.0, 0.0, 0.006, 0.0, 0.006))        # link4 - right_elbow_link
 
         # the joints don't weigh anything
         self._M_JOINTS = [sp.zeros(6, 6) for ii in range(self.N_JOINTS)]
@@ -62,22 +60,38 @@ class Config(BaseConfig):
         # segment lengths associated with each joint
         # [x, y, z],  Ignoring lengths < 1e-04
 
-        self.L = np.array(
-            [
-                [0, 0, 0],  # from origin to l0 (non-existent)
-                [0, 0, 0],  # from l0 to j0
-                [1.0, 0, 0],  # from j0 to l1 COM
-                [1.0, 0, 0],  # from l1 COM to j1
-                [0.6, 0, 0],  # from j1 to l2 COM
-                [0.6, 0, 0],  # from l2 COM to j2
-                [0.35, 0, 0],  # from j2 to l3 COM
-                [0.35, 0, 0],	# from l3 COM to j3
-                #TODO LS vals in next lines
-                [0.35, 0, 0],  # from j3 to l4 COM
-                [0.35, 0, 0],
-            ],  # from l4 COM to EE
-            dtype="float32",
-        )
+        
+        self.L = [
+            [0.0, 0.0, 0.0],                        # base offset (optional)
+            [0.0055, -0.15535, 0.42999],            # right_shoulder_pitch_joint
+            [0.005045, -0.053657, -0.015715],       # right_shoulder_pitch_link
+            [-0.0055, -0.0565, -0.0165],            # right_shoulder_roll_joint
+            [0.000679, -0.00115, -0.094076],        # right_shoulder_roll_link
+            [0.0, 0.0, -0.1343],                    # right_shoulder_yaw_joint
+            [0.01365, -0.002767, -0.16266],         # right_shoulder_yaw_link
+            [0.0185, 0.0, -0.198],                  # right_elbow_joint
+            [0.164862, -0.000118, -0.015734],       # right_elbow_link
+            [0.0, 0.0, 0.09],                       # offset to end of hand/fingers (assumed)
+        ]
+        self.L = np.array(self.L)
+
+
+
+        '''
+        self.L = [
+            [0.0, 0.0, 0.0],                        # base offset (optional, can be torso_link)
+            [0.0055, -0.15535, 0.42999],            # right_shoulder_pitch_joint (from torso_link)
+            [0.005045, -0.053657, -0.015715],       # right_shoulder_pitch_link (inertial origin)
+            [-0.0055, -0.0565, -0.0165],            # right_shoulder_roll_joint (from shoulder_pitch_link)
+            [0.000679, -0.00115, -0.094076],        # right_shoulder_roll_link (inertial origin)
+            [0.0, 0.0, -0.1343],                    # right_shoulder_yaw_joint (from shoulder_roll_link)
+            [0.01365, -0.002767, -0.16266],         # right_shoulder_yaw_link (inertial origin)
+            [0.0185, 0.0, -0.198],                  # right_elbow_joint (from shoulder_yaw_link)
+            [0.164862, -0.000118, -0.015734],       # right_elbow_link (inertial origin)
+        ]
+        '''
+
+
 
         # Transform matrix : origin -> link 0
         # no change of axes, account for offsets
