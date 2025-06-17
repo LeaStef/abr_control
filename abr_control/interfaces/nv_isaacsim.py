@@ -2,7 +2,6 @@ import numpy as np
 from isaacsim import SimulationApp
 from .interface import Interface
 
-
 class IsaacSim(Interface):
     """An interface for IsaacSim.
 
@@ -18,6 +17,7 @@ class IsaacSim(Interface):
     def __init__(self, robot_config, dt=0.001, force_download=False):
 
         super().__init__(robot_config)
+        self.robot_config = robot_config
         self.dt = dt  # time step
         self.count = 0  # keep track of how many times send forces is called
 
@@ -51,38 +51,40 @@ class IsaacSim(Interface):
         import omni
         from isaacsim.robot.policy.examples.robots.h1 import H1FlatTerrainPolicy
         from isaacsim.storage.native import get_assets_root_path
-        from omni.isaac.core.articulations import Articulation, ArticulationView# type: ignore
+        from omni.isaac.core.articulations import Articulation, ArticulationView # type: ignore
         import omni.isaac.core.utils.stage as stage_utils # type: ignore
         from isaacsim.core.api.robots import Robot
-        from isaacsim.core.api.controllers.articulation_controller import ArticulationController
+        from pxr import UsdLux, Sdf, Gf, UsdPhysics
         # Create a world
         self.world = World(physics_dt=self.dt,rendering_dt=self.dt)
         self.context = omni.usd.get_context()
         self.stage = self.context.get_stage()
-        self.world.add_physics_callback("send_actions", self.send_actions)
+        #TODO necessary for H1 robot
+        #self.world.add_physics_callback("send_actions", self.send_actions)
         self.world.scene.add_default_ground_plane()
-            
-        
-        
-        
-        '''
-        assets_root_path = get_assets_root_path()
 
-        # Load Jaco2 robot
+        # enable physics
+        scene = UsdPhysics.Scene.Define(self.stage, Sdf.Path("/physicsScene"))
+
+        # set gravity
+        scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0.0, 0.0, -1.0))
+        scene.CreateGravityMagnitudeAttr().Set(981.0)
+
+        # add lighting
+        distantLight = UsdLux.DistantLight.Define(self.stage, Sdf.Path("/DistantLight"))
+        distantLight.CreateIntensityAttr(500)
+        
+        ## LOAD Jaco2 robot
+        assets_root_path = get_assets_root_path()
         stage_utils.add_reference_to_stage(
                  usd_path=assets_root_path + "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd",
                  # Robots/Kinova/Jaco2/J2N7S300/j2n7s300_instanceable.usd   -->  7 DOF arm , not compatible with ABR controller
                  prim_path=self.prim_path,
                  )
-
         robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
-        ''' 
-
-
+        
         '''
         # Load H1 robot
-        
-            
         self.h1 = H1FlatTerrainPolicy(
             prim_path=self.prim_path,
             name=self.name,
@@ -93,74 +95,39 @@ class IsaacSim(Interface):
             usd_path=assets_root_path + "/Isaac/Robots/Unitree/H1/h1.usd",
             prim_path=self.prim_path,
         )
-        '''
-                   
+        '''      
         # Resetting the world needs to be called before querying anything related to an articulation specifically.
         # Its recommended to always do a reset after adding your assets, for physics handles to be propagated properly
         self.world.reset()
+        
         # Load robot
         self.articulation = Articulation(prim_path=self.prim_path, name=self.name + "_articulation")
         self.articulation.initialize()
-        print("DOF names:", self.articulation.dof_names)
+        self.world.scene.add(self.articulation) # Add to scene if not already added by higher-level env
 
         self.articulation_view = ArticulationView(prim_paths_expr=self.prim_path, name=self.name + "_view")
         self.world.scene.add(self.articulation_view)
-
-        articulation_controller = ArticulationController()
-        articulation_controller.initialize(self.articulation_view)
-
-
+        self.articulation_view.initialize()
+     
+        self.world.reset()
         # necessary so self.q and self.dq are accessible
         self.world.initialize_physics()
-
-        # get the robot's initial joint angle
-        #TODO maybe replace with articulation.get_default_state() 
-        self.initial_q = self.get_feedback(arm_only=False)["q"]
-
 
         self.joint_pos_addrs = []
         self.joint_vel_addrs = []
         self.joint_dyn_addrs = []
 
-        
-        
-        if joint_names is None:
-            # if no joint names provided, get addresses of joints in the kinematic
-            # tree from end-effector (EE) to world body
-            #bodyid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "EE")
-         
-            #bodyid = self.articulation.get_dof_index('right_elbow_joint')
-            #l_id = self.articulation.get_link_index("right_elbow_joint") # get the link index of the right elbow joint
-            #bodyid = self.articulation.get_link_index("EE") 
-            dof_names = self.articulation.dof_names
-            print("DOF names:", dof_names)
-            #bodid = self.articulation.dof_names.index("EE") 
-            #bodyid = self.articulation_controller
-            #bodyid = self.articulation.get_dof_index("EE") 
-
-            # and working back to the world body
-            #while self.model.body_parentid[bodyid] != 0:
-            while bodyid > 1:
-                print (bodyid)
-                #first_joint = self.articulation.get_joint_index("EE") 
-                #num_joints = self.model.body_jntnum[bodyid]
-
-        
-
+        print("Connecting to robot config...")
         self.robot_config._connect(
-            #self.articulation,
+            self.world,
+            self.stage,
+            self.articulation,
             self.articulation_view,
             self.joint_pos_addrs,
             self.joint_vel_addrs,
+            self.prim_path
         )
         
-
-
-        
-
-
-
-
 
     def disconnect(self):
         """Any socket closing etc that must be done to properly shut down"""
@@ -175,16 +142,11 @@ class IsaacSim(Interface):
         u : np.array
             An array of joint torques [Nm]
         """
-        print("robot joint pos: ", self.robot.get_joint_positions())
-        print("u: ", u)
         # Apply the control signal
-        #self.articulation.set_joint_efforts(u)
-        #self.robot.set_joint_efforts(u)
-        self.robot.set_joint_efforts(u)
+        self.articulation_view.set_joint_efforts(u)
 
          # move simulation ahead one time step
         self.world.step(render=True) # execute one physics step and one rendering step
-
 
 
     def send_target_angles(self, q):
@@ -193,40 +155,6 @@ class IsaacSim(Interface):
         q : numpy.array
                 the target joint angles [radians]
         """
-        #TODO make more general, with flag
-        #TODO use same flag for jaco2 and H1
-        
-        # full jaco2 arm with hand DOF
-        if np.size(q) == 12:
-            self.articulation.set_joint_positions(q)
-        # full H1 body with all DOF
-        if np.size(q) == 19:
-            self.articulation.set_joint_positions(q)
-        # only jaco2 arm
-        if np.size(q) == 6:
-            fb = self.get_feedback(arm_only=False)
-            fb_q = fb["q"]
-            fb_q[:6] = q
-            self.articulation.set_joint_positions(fb_q)
-        # only H1 right arm
-        if np.size(q) == 4:
-            fb_q = self.initial_q            
-            
-            #fb = self.get_feedback(arm_only=False)
-            #fb_q = fb["q"]
-            
-            fb_q [6] = q[0]    # right_shoulder_pitch_joint            
-            fb_q [10] = q[1]   # right_shoulder_roll_joint 
-            fb_q [14] = q[2]   # right_shoulder_yaw_joint
-            fb_q [18] = q[3]   # right_elbow_joint
-            self.articulation.set_joint_positions(fb_q)
-            
-        
-        else:
-            print("The method send_target_angles of the isaacsim interface does not support the number of joint angles that are attempted to be set.")
-        # move simulation ahead one time step
-        self.world.step(render=True) # execute one physics step and one rendering step
- 
 
 
     
@@ -237,36 +165,9 @@ class IsaacSim(Interface):
         respectively
         """
         # Get the joint angles and velocities
-        q = self.articulation.get_joint_positions()
-        dq = self.articulation.get_joint_velocities()
-
-        # get all DOF of the robot
-        if arm_only == False:
-            self.q = q
-            self.dq = dq
-        # get only DOF of the arm
-        else:
-            if self.name == "jaco2":
-                 # get only the right arm DOF of the jaco 2 without hand
-                 self.q = q[:6]
-                 self.dq = dq[:6]
-            elif self.name == "h1":
-                # get only the right arm DOF of the H1 robot
-                tmp = np.zeros(4)  
-                tmp[0] = q[6]    # right_shoulder_pitch_joint            
-                tmp[1] = q[10]   # right_shoulder_roll_joint 
-                tmp[2] = q[14]   # right_shoulder_yaw_joint
-                tmp[3] = q[18]   # right_elbow_joint
-                self.q = tmp
-                
-                tmp[0] = dq[6]    # right_shoulder_pitch_joint            
-                tmp[1] = dq[10]   # right_shoulder_roll_joint 
-                tmp[2] = dq[14]   # right_shoulder_yaw_joint
-                tmp[3] = dq[18]   # right_elbow_joint
-                self.dq = tmp
+        self.q = self.articulation.get_joint_positions()
+        self.dq = self.articulation.get_joint_velocities()
         return {"q": self.q, "dq": self.dq}
-        
-
 
     def get_xyz(self, name):
                 """Returns the xyz position of the specified object
