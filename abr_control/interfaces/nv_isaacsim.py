@@ -20,7 +20,7 @@ class IsaacSim(Interface):
         self.robot_config = robot_config
         self.dt = dt  # time step
         self.count = 0  # keep track of how many times send forces is called
-
+        self.ee_name = "end_effector"  # EE
         #self.q = np.zeros(self.robot_config.N_JOINTS)  # joint angles
         #self.initial_q = np.zeros(self.robot_config.N_JOINTS)  # joint angles
         #self.dq = np.zeros(self.robot_config.N_JOINTS)  # joint_velocities
@@ -55,6 +55,7 @@ class IsaacSim(Interface):
         import omni.isaac.core.utils.stage as stage_utils # type: ignore
         from isaacsim.core.api.robots import Robot
         from pxr import UsdLux, Sdf, Gf, UsdPhysics
+        
         # Create a world
         self.world = World(physics_dt=self.dt,rendering_dt=self.dt)
         self.context = omni.usd.get_context()
@@ -73,7 +74,29 @@ class IsaacSim(Interface):
         # add lighting
         distantLight = UsdLux.DistantLight.Define(self.stage, Sdf.Path("/DistantLight"))
         distantLight.CreateIntensityAttr(500)
-        
+        '''
+        # setting up import configuration:
+        status, import_config = omni.kit.commands.execute("MJCFCreateImportConfig")
+        import_config.set_fix_base(True)  # fix the base of the robot
+        import_config.set_make_default_prim(False)
+
+        # Get path to extension data:
+        ext_manager = omni.kit.app.get_app().get_extension_manager()
+        ext_id = ext_manager.get_enabled_extension_id("isaacsim.asset.importer.mjcf")
+        extension_path = ext_manager.get_extension_path(ext_id)
+        # import MJCF
+        omni.kit.commands.execute(
+            "MJCFCreateAsset", 
+            #mjcf_path=extension_path + "/data/mjcf/nv_ant.xml",
+            mjcf_path=extension_path + "/data/mjcf/nv_humanoid.xml",
+            #mjcf_path=self.robot_config.xml_file,
+            import_config=import_config,
+            prim_path=self.prim_path
+        )
+
+
+
+        '''
         ## LOAD Jaco2 robot
         assets_root_path = get_assets_root_path()
         stage_utils.add_reference_to_stage(
@@ -108,14 +131,18 @@ class IsaacSim(Interface):
         self.articulation_view = ArticulationView(prim_paths_expr=self.prim_path, name=self.name + "_view")
         self.world.scene.add(self.articulation_view)
         self.articulation_view.initialize()
+       
      
         self.world.reset()
         # necessary so self.q and self.dq are accessible
         self.world.initialize_physics()
+         
+        self.world.step(render=False)
 
         self.joint_pos_addrs = []
         self.joint_vel_addrs = []
         self.joint_dyn_addrs = []
+
 
         print("Connecting to robot config...")
         self.robot_config._connect(
@@ -133,6 +160,33 @@ class IsaacSim(Interface):
         """Any socket closing etc that must be done to properly shut down"""
         self.simulation_app.close() # close Isaac Sim
         print("IsaacSim connection closed...")
+
+    #TODO adapt to IsaacSim
+    def get_joint_pos_addrs(self, jntadr):
+        # store the data.qpos indices associated with this joint
+        first_pos = self.model.jnt_qposadr[jntadr]
+        posvec_length = self.robot_config.JNT_POS_LENGTH[self.model.jnt_type[jntadr]]
+        joint_pos_addr = list(range(first_pos, first_pos + posvec_length))[::-1]
+        return joint_pos_addr
+
+
+    def get_joint_vel_addrs(self, joint_name):
+        if self.articulation_view is None:
+            raise RuntimeError("Robot ArticulationView not set up.")
+        
+        #dof_indices = self.articulation_view.get_dof_indices(joint_name)
+        #print('dof_indices:', dof_indices)
+         # Get all DOF names in the articulation
+        dof_names = self.articulation_view.dof_names
+        dof_name_to_index = {name: i for i, name in enumerate(dof_names)}
+        
+        if joint_name.endswith(self.ee_name):
+            index = None
+        else:
+            index = dof_name_to_index[joint_name]
+
+        return index
+        
 
 
     def send_forces(self, u):
@@ -158,16 +212,21 @@ class IsaacSim(Interface):
 
 
     
-    def get_feedback(self, arm_only=True):
+    def get_feedback(self):
         """Return a dictionary of information needed by the controller.
 
         Returns the joint angles and joint velocities in [rad] and [rad/sec],
         respectively
         """
         # Get the joint angles and velocities
+        
         self.q = self.articulation.get_joint_positions()
+        #self.q = q[:self.robot_config.N_JOINTS]  # only take the first N_JOINTS
         self.dq = self.articulation.get_joint_velocities()
+        #self.dq = dq[:self.robot_config.N_JOINTS]  # only take the first N_JOINTS
         return {"q": self.q, "dq": self.dq}
+
+
 
     def get_xyz(self, name):
                 """Returns the xyz position of the specified object
@@ -181,7 +240,7 @@ class IsaacSim(Interface):
 
                 return object_position
     
-
+    #TODO check if overlap to def quaternion
     def get_orientation(self, name):
         """Returns the orientation of an object in CoppeliaSim
 
@@ -197,8 +256,33 @@ class IsaacSim(Interface):
         obj = self.world.scene.get_object(name) 
         object_position, object_orientation = obj.get_world_pose()
         return object_orientation
+    
+
+    #TODO change method name in 'set_named_prim' or something as mocap is mujoco thing
+    def set_mocap_xyz(self, name, xyz):
+        """
+        Set the world position of a named prim (used like a mocap target).
+
+        Parameters
+        ----------
+        name : str
+            Name of the prim (e.g. site or target object)
+        xyz : np.ndarray
+            Target world position [x, y, z] in meters
+        """
+        # Assume prim is under robot or scene root
+        #prim_path = f"{self.prim_path}/{name}"  
+        world_path = "/World"
+        prim_path = f"{world_path}/{name}" 
+
+        print("prim_path:", prim_path)
+        #from omni.isaac.core.utils.prims import set_prim_world_position
+        #set_prim_world_position(prim_path, xyz)
 
 
+
+
+    #TODO remove as is the same as above
     def set_xyz(self, name, xyz):
         """Set the position of an object in the environment.
 
@@ -220,4 +304,18 @@ class IsaacSim(Interface):
         prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0 ,0.0 ,0.0 ,0.0))
         prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0 ,0.0 ,0.02))
         #prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(0.70711 ,0.70711 ,0.0 ,0.0))
+
+
+
+    #TODO use for R and Tx in isaacsim_config
+    def get_prim_ends_with_name(self, name):
+        prim_path = None
+        for prim in self.stage.Traverse():
+            print("prim: ", prim)
+            print("prim.GetPath(): ", prim.GetPath())
+            print("name: ", name)
+            if str(prim.GetPath()).endswith(name):
+                prim_path = prim.GetPath()
+                break
+        return prim_path
     

@@ -4,6 +4,7 @@ import numpy as np
 from abr_control.utils import download_meshes
 import omni
 
+
 class IsaacsimConfig:
     """A wrapper on the Mujoco simulator to generate all the kinematics and
     dynamics calculations necessary for controllers.
@@ -153,7 +154,9 @@ class IsaacsimConfig:
 
         
         # number of controllable joints in the robot arm
-        self.N_JOINTS = len(self.joint_vel_addrs)
+        #TODO: this is a hack for the jaco2 robot, which has 12 joints
+        #self.N_JOINTS = len(self.joint_vel_addrs)
+        self.N_JOINTS = self.articulation_view.num_dof
         print (f"Number of controllable joints: {self.N_JOINTS}")
         # number of joints in the IsaacSim simulation
         N_ALL_JOINTS = self.articulation_view.num_dof
@@ -196,21 +199,20 @@ class IsaacsimConfig:
         u: np.array
             The set of joint forces to apply to the arm joints [Nm]
         """
-        # save current state
+
         old_q = np.copy(self.articulation.get_joint_positions())
         old_dq = np.copy(self.articulation.get_joint_velocities())
         old_u = np.copy(self.articulation.get_applied_joint_efforts())
 
-        # update positions to specified state      
-        #TODO this is a (jaco2 specific) hack to set the first 6 joints   
-        new_q = np.copy(old_q)
-        new_q[:6] = q
-        self.articulation.set_joint_positions(new_q)  # set the joint positions in the articulation view
+        # update positions to specified state
+        self.articulation.set_joint_positions(q)  # set the joint positions in the articulation view
 
         if dq is not None:
-            self.data.qvel[self.joint_vel_addrs] = np.copy(dq)
+            #self.data.qvel[self.joint_vel_addrs] = np.copy(dq)
+            self.articulation_view.set_joint_velocities(dq)
         if u is not None:
-            self.data.ctrl[:] = np.copy(u)
+            #self.data.ctrl[:] = np.copy(u)
+            self.articulation_view.set_joint_efforts(u)
 
         # move simulation forward to calculate new kinematic information
         self.world.step(render=True) # execute one physics step and one rendering step
@@ -229,9 +231,8 @@ class IsaacsimConfig:
         q: np.ndarray, optional (Default: None)
             Joint positions to compute the bias forces at. If None, uses current sim state.
         """
-        if q is not None:
-            old_q = self.articulation_view.get_joint_positions()
-            old_dq = self.articulation_view.get_joint_velocities()
+        if not self.use_sim_state and q is not None:
+            old_q, old_dq, old_u = self._load_state(q)
 
             # Set new state (velocities to zero to isolate gravity)
             self.articulation_view.set_joint_positions(q)
@@ -280,7 +281,9 @@ class IsaacsimConfig:
         raise NotImplementedError
 
     def J(self, name, q=None, x=None, object_type="body"):
-        """Returns the Jacobian for the specified Mujoco object
+        """Returns the Jacobian for the specified link, 
+        computed at the origin of the link's rigid body frame, 
+        which in Isaac Sim  coincides with the link’s center of mass.
 
         Parameters
         ----------
@@ -293,6 +296,10 @@ class IsaacsimConfig:
         object_type: string, the Mujoco object type, optional (Default: body)
             options: body, geom, site
         """
+        #TODO outsource this to a common function and check is can be qued for EE and 
+        # end_effector at the same time, or checked which is used for the current robot
+        if name == "EE": name = "end_effector"
+
         if x is not None and not np.allclose(x, 0):
             raise Exception("x offset currently not supported, set to None")
 
@@ -300,32 +307,31 @@ class IsaacsimConfig:
             old_q, old_dq, old_u = self._load_state(q)
 
         if object_type == "body":
-            # TODO: test if using this function is faster than the old way
-            # NOTE: for bodies, the Jacobian for the COM is returned
-            mujoco.mj_jacBodyCom(
-                self.model,
-                self.data,
-                self._J3NP,
-                self._J3NR,
-                mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name),
-            )
+            try:
+                #TODO maybe outsource if also needed elsewhere
+                link_list = self.articulation_view.body_names
+                prefix = link_list[0].split('_')[0]  # Get the prefix from the first link name
+                full_name = f"{prefix}_{name}"  # Construct the full name
+                link_index = link_list.index(full_name)
+            except ValueError:
+                raise RuntimeError(f"Link '{name}' not found in articulation.")
+            jacobians = self.articulation_view.get_jacobians(clone=True)  # shape: (num_links, 6, num_dofs)
+            J = jacobians[0, link_index, :, :]
+
+
         else:
             if object_type == "geom":
-                jacp = self.data.get_geom_jacp
-                jacr = self.data.get_geom_jacr
+                raise Exception("Calculating the Jacobian is not yet implemented for 'geom'.")
             elif object_type == "site":
-                jacp = self.data.get_site_jacp
-                jacr = self.data.get_site_jacr
+                raise Exception("Calculating the Jacobian is not yet implemented for 'site'.")
             else:
                 raise Exception("Invalid object type specified: ", object_type)
 
-            jacp(name, self._J3NP)  # [self.jac_indices]  # pylint: disable=W0106
-            jacr(name, self._J3NR)  # [self.jac_indices]  # pylint: disable=W0106
+        # get the position Jacobian (linear velocity Jacobian (Jv))
+        self._J6N[:3] = J[:3, :]
+        # get the rotation Jacobian (angular velocity Jacobian (Jω))
+        self._J6N[3:] = J[3:, :]
 
-        # get the position Jacobian hstacked (1 x N_JOINTS*3)
-        self._J6N[:3] = self._J3NP[:, self.joint_vel_addrs].reshape((3, self.N_JOINTS))
-        # get the rotation Jacobian hstacked (1 x N_JOINTS*3)
-        self._J6N[3:] = self._J3NR[:, self.joint_vel_addrs].reshape((3, self.N_JOINTS))
 
         if not self.use_sim_state and q is not None:
             self._load_state(old_q, old_dq, old_u)
@@ -377,14 +383,41 @@ class IsaacsimConfig:
         object_type : str
             One of "body", "geom", or "site".
         """
-        print(f"R: {name}, q: {q}, object_type: {object_type}")
+        #print(f"R: {name}, q: {q}, object_type: {object_type}")
+        if not self.use_sim_state and q is not None:
+            old_q = self.articulation_view.get_joint_positions()
+            self.articulation_view.set_joint_positions(q)
+            #self._world.step(render=False)
 
-        import omni.isaac.core.utils.prims as prims_utils
-        prims = prims_utils.get_all_matching_child_prims(self.prim_path)
-        print(f"prims: {prims}")
-        # Construct the full prim path
-        prim_path = f"/World/{name}"
-      
+        if object_type == "body":
+            print(f"Finding body with name: {name}")
+            # Look for a link prim ending in the given name
+            prim_path = self._get_prim_path(name)
+        elif object_type in ["site", "geom"]:
+            # Assume full path is given or fixed base path
+            prim_path = f"{self.prim_path}/{name}"
+        else:
+            raise ValueError(f"Unsupported object type: {object_type}")
+        
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            raise RuntimeError(f"Prim '{prim_path}' not found")
+                
+        # Get 4x4 world transform matrix
+        matrix = omni.usd.get_world_transform_matrix(prim)
+
+        # Convert to 3x3 rotation matrix using numpy
+        R = np.array([
+            [matrix[0][0], matrix[0][1], matrix[0][2]],
+            [matrix[1][0], matrix[1][1], matrix[1][2]],
+            [matrix[2][0], matrix[2][1], matrix[2][2]]
+        ])
+        if not self.use_sim_state and q is not None:
+            self.articulation_view.set_joint_positions(old_q)
+            #self._world.step(render=False)
+
+        return R
+            
         
 
     def quaternion(self, name, q=None):
@@ -398,15 +431,29 @@ class IsaacsimConfig:
             The joint angles of the robot. If None the current state is
             retrieved from the Mujoco simulator
         """
+        #TODO outsource this to a common function and check is can be qued for EE and 
+        # end_effector at the same time, or checked which is used for the current robot
+        if name == "EE": name = "end_effector"
         if not self.use_sim_state and q is not None:
             old_q, old_dq, old_u = self._load_state(q)
 
-        quaternion = np.copy(self.data.body(name).xquat)
+        prim_path = self._get_prim_path(name)
+        prim = self.stage.GetPrimAtPath(prim_path)
+
+        # Get 4x4 world transform matrix
+        matrix = omni.usd.get_world_transform_matrix(prim)
+
+        from pxr import Gf
+        # Extract quaternion (as Gf.Quatf or Gf.Quatd)
+        quat = matrix.ExtractRotationQuat()  # returns Gf.Quatd or Gf.Quatf
+
+        # Convert to [w, x, y, z] NumPy array 
+        quat_np = np.array([quat.GetReal(), *quat.GetImaginary()])
 
         if not self.use_sim_state and q is not None:
             self._load_state(old_q, old_dq, old_u)
 
-        return quaternion
+        return quat_np
 
     def C(self, q=None, dq=None):
         """NOTE: The Coriolis and centrifugal effects (and gravity) are
@@ -452,6 +499,7 @@ class IsaacsimConfig:
         np.ndarray
             World position [x, y, z] of the object.
         """
+        if name == "EE": name = "end_effector"
         if x is not None and not np.allclose(x, 0):
             raise Exception("x offset currently not supported: ", x)
 
@@ -462,20 +510,12 @@ class IsaacsimConfig:
             self.world.step(render=False)
 
         prim_path = None
-        print(f"Tx: name={name}, q={q}, object_type={object_type}")
+        #print(f"Tx: name={name}, q={q}, object_type={object_type}")
 
-        
+        #TODO similar to others like R, ousource
         if object_type == "body":
-            print(f"Finding body with name: {name}")
-            # Find all RigidBody prims (physics bodies)
-            print("\nAll Body prims:")
-            for prim in self.stage.Traverse():
-                    # Check if the prim path ends with the desired name
-                    if str(prim.GetPath()).endswith(name):
-                        prim_path = prim.GetPath()
-                        break
-            print(f"Found prim path: {prim_path}")
-
+            prim_path = self._get_prim_path(name)
+            
 
         elif object_type == "joint":
             # Use joint index to find parent link's prim path
@@ -522,3 +562,29 @@ class IsaacsimConfig:
         """
         # TODO if ever required
         raise NotImplementedError
+    
+
+    #TODO remove or see if useful
+    '''
+    def save_current_state(self):
+        old_q = np.copy(self.articulation.get_joint_positions())
+        old_dq = np.copy(self.articulation.get_joint_velocities())
+        old_u = np.copy(self.articulation.get_applied_joint_efforts())
+
+        return old_q, old_dq, old_u
+        '''
+
+    #TODO remove or use 
+    def restore_state(self, state):
+        old_q, old_dq, old_u = state
+        self.articulation.set_joint_positions(old_q)
+        self.articulation.set_joint_velocities(old_dq)
+        self.articulation.set_applied_joint_efforts(old_u)
+
+    def _get_prim_path(self, name):
+        for prim in self.stage.Traverse():
+            # Check if the prim path ends with the desired name
+            if str(prim.GetPath()).endswith(name):
+                return prim.GetPath()
+        return None
+            
