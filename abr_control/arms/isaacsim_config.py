@@ -123,9 +123,11 @@ class IsaacsimConfig:
                 files=files,
             )
 
+        #TODO fix above to get away from xml
+        self.robot = xml_file
         self.use_sim_state = use_sim_state
 
-    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path):
+    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path, ee_name):
 
         """Called by the interface once the Mujoco simulation is created,
         this connects the config to the simulator so it can access the
@@ -151,41 +153,43 @@ class IsaacsimConfig:
         self.joint_pos_addrs = np.copy(joint_pos_addrs)
         self.joint_vel_addrs = np.copy(joint_vel_addrs)
         self.prim_path = prim_path
+        self.ee_name = ee_name
 
         
         # number of controllable joints in the robot arm
         #TODO: this is a hack for the jaco2 robot, which has 12 joints
         #self.N_JOINTS = len(self.joint_vel_addrs)
-        self.N_JOINTS = self.articulation_view.num_dof
+        #self.N_JOINTS = self.articulation_view.num_dof
+        self.N_JOINTS = 6
         print (f"Number of controllable joints: {self.N_JOINTS}")
         # number of joints in the IsaacSim simulation
-        N_ALL_JOINTS = self.articulation_view.num_dof
-        print (f"Number of ALL joints in simulation: {N_ALL_JOINTS}")
+        self.N_ALL_JOINTS = self.articulation_view.num_dof
+        print (f"Number of ALL joints in simulation: {self.N_ALL_JOINTS}")
 
         # need to calculate the joint_vel_addrs indices in flat vectors returned
         # for the Jacobian
         self.jac_indices = np.hstack(
             # 6 because position and rotation Jacobians are 3 x N_JOINTS
-            [self.joint_vel_addrs + (ii * N_ALL_JOINTS) for ii in range(3)]
+            [self.joint_vel_addrs + (ii * self.N_ALL_JOINTS) for ii in range(3)]
         )
 
         # for the inertia matrix
         self.M_indices = [
-            ii * N_ALL_JOINTS + jj
+            ii * self.N_ALL_JOINTS + jj
             for jj in self.joint_vel_addrs
             for ii in self.joint_vel_addrs
         ]
 
         # a place to store data returned from Mujoco
         self._g = np.zeros(self.N_JOINTS)
-        self._J3NP = np.zeros((3, N_ALL_JOINTS))
-        self._J3NR = np.zeros((3, N_ALL_JOINTS))
+        self._J3NP = np.zeros((3, self.N_ALL_JOINTS))
+        self._J3NR = np.zeros((3, self.N_ALL_JOINTS))
         self._J6N = np.zeros((6, self.N_JOINTS))
-        self._MNN = np.zeros((N_ALL_JOINTS, N_ALL_JOINTS))
+        self._MNN = np.zeros((self.N_ALL_JOINTS, self.N_ALL_JOINTS))
         self._R9 = np.zeros(9)
         self._R = np.zeros((3, 3))
         self._x = np.ones(4)
-        self.N_ALL_JOINTS = N_ALL_JOINTS
+        self.N_ALL_JOINTS = self.N_ALL_JOINTS
 
     def _load_state(self, q, dq=None, u=None):
         """Change the current joint angles
@@ -238,7 +242,7 @@ class IsaacsimConfig:
             self.articulation_view.set_joint_positions(q)
             self.articulation_view.set_joint_velocities(np.zeros_like(q))
 
-            self.world.step(render=False)
+            ### self.world.step(render=False)
 
         # Compute gravity and Coriolis/centrifugal separately
         gravity = self.articulation_view.get_generalized_gravity_forces()
@@ -253,7 +257,7 @@ class IsaacsimConfig:
             # Restore old state
             self.articulation_view.set_joint_positions(old_q)
             self.articulation_view.set_joint_velocities(old_dq)
-            self.world.step(render=False)
+            ### self.world.step(render=False)
 
         return -g  # match MuJoCo's negative qfrc_bias convention
 
@@ -280,63 +284,145 @@ class IsaacsimConfig:
         # general case, check differences.cpp'
         raise NotImplementedError
 
-    def J(self, name, q=None, x=None, object_type="body"):
-        """Returns the Jacobian for the specified link, 
-        computed at the origin of the link's rigid body frame, 
-        which in Isaac Sim  coincides with the link’s center of mass.
-
+    def J(self, name, q=None, x=None, object_type="body", controlled_dofs=None):
+        """Returns the Jacobian for the specified link,
+        computed at the origin of the link's rigid body frame,
+        which in Isaac Sim coincides with the link's center of mass.
+        
         Parameters
         ----------
         name: string
-            The name of the Mujoco body to retrieve the Jacobian for
+            The name of the link/body to retrieve the Jacobian for
         q: float numpy.array, optional (Default: None)
             The joint angles of the robot. If None the current state is
-            retrieved from the Mujoco simulator
+            retrieved from the Isaac Sim simulator
         x: float numpy.array, optional (Default: None)
-        object_type: string, the Mujoco object type, optional (Default: body)
-            options: body, geom, site
+            Offset from link origin (currently not supported)
+        object_type: string, optional (Default: "body")
+            The object type - options: body, geom, site
+        controlled_dofs: list, optional (Default: None)
+            List of DOF indices to include in Jacobian. If None, uses first 6 DOFs
+        
+        Returns
+        -------
+        numpy.array
+            6xN Jacobian matrix where N is number of controlled DOFs
+            First 3 rows: linear velocity Jacobian (Jv)
+            Last 3 rows: angular velocity Jacobian (Jω)
         """
-        #TODO outsource this to a common function and check is can be qued for EE and 
-        # end_effector at the same time, or checked which is used for the current robot
-        if name == "EE": name = "end_effector"
-
+        
+        # Handle special case mappings
+        if name == "EE": 
+            name = self.ee_name
+        
+        # Check for unsupported features
         if x is not None and not np.allclose(x, 0):
             raise Exception("x offset currently not supported, set to None")
-
-        if not self.use_sim_state and q is not None:
-            old_q, old_dq, old_u = self._load_state(q)
-
+        
+        # Set controlled DOFs (default to first 6 for arm control)
+        if controlled_dofs is not None:
+            self.controlled_dof_indices = controlled_dofs
+        elif not hasattr(self, 'controlled_dof_indices'):
+            self.controlled_dof_indices = list(range(6))  # Default: first 6 DOFs
+        
+        '''
+        # Handle joint state setting if provided
+        if q is not None:
+            # Store current state if we need to restore it
+            old_positions = self.articulation_view.get_joint_positions(clone=True)
+            # Set new joint positions
+            self.articulation_view.set_joint_positions(q.reshape(1, -1))
+            # Forward the simulation to update Jacobians
+            # You might need to call a simulation step here depending on your setup
+        '''
+    
         if object_type == "body":
-            try:
-                #TODO maybe outsource if also needed elsewhere
-                link_list = self.articulation_view.body_names
-                prefix = link_list[0].split('_')[0]  # Get the prefix from the first link name
-                full_name = f"{prefix}_{name}"  # Construct the full name
-                link_index = link_list.index(full_name)
-            except ValueError:
-                raise RuntimeError(f"Link '{name}' not found in articulation.")
-            jacobians = self.articulation_view.get_jacobians(clone=True)  # shape: (num_links, 6, num_dofs)
-            J = jacobians[0, link_index, :, :]
-
-
-        else:
-            if object_type == "geom":
-                raise Exception("Calculating the Jacobian is not yet implemented for 'geom'.")
-            elif object_type == "site":
-                raise Exception("Calculating the Jacobian is not yet implemented for 'site'.")
+            # Get Jacobians from articulation view
+            jacobians = self.articulation_view.get_jacobians(clone=True)
+                
+            # Check if ArticulationView has any environments
+            if jacobians.shape[0] == 0:
+                raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
+                
+            # Get link index
+            link_index = self._get_link_index(name)
+                
+            # Extract Jacobian for specific link
+            env_idx = 0  # Assuming single environment
+                
+            # Handle different Jacobian tensor shapes
+            if len(jacobians.shape) == 4:
+                # Shape: (num_envs, num_bodies, 6, num_dofs)
+                J_full = jacobians[env_idx, link_index, :, :]
+            elif len(jacobians.shape) == 3:
+                # Shape: (num_envs, num_bodies * 6, num_dofs)
+                start_row = link_index * 6
+                end_row = start_row + 6
+                J_full = jacobians[env_idx, start_row:end_row, :]
             else:
-                raise Exception("Invalid object type specified: ", object_type)
-
-        # get the position Jacobian (linear velocity Jacobian (Jv))
-        self._J6N[:3] = J[:3, :]
-        # get the rotation Jacobian (angular velocity Jacobian (Jω))
-        self._J6N[3:] = J[3:, :]
-
-
-        if not self.use_sim_state and q is not None:
-            self._load_state(old_q, old_dq, old_u)
-
+                raise RuntimeError(f"Unexpected jacobians shape: {jacobians.shape}")
+                
+            # Extract only the columns for controllable DOFs
+            J = J_full[:, self.controlled_dof_indices]
+                
+            # Verify dimensions
+            if J.shape[0] != 6:
+                raise RuntimeError(f"Expected Jacobian to have 6 rows, got {J.shape[0]}")
+            if J.shape[1] != len(self.controlled_dof_indices):
+                raise RuntimeError(f"Expected Jacobian to have {len(self.controlled_dof_indices)} columns, got {J.shape[1]}")
+                
+            # Assign to internal storage
+            # Linear velocity Jacobian (first 3 rows)
+            self._J6N[:3, :] = J[:3, :]
+            # Angular velocity Jacobian (last 3 rows)
+            self._J6N[3:, :] = J[3:, :]
+                
+        elif object_type == "geom":
+            raise NotImplementedError("Calculating the Jacobian for 'geom' is not yet implemented.")
+        elif object_type == "site":
+            raise NotImplementedError("Calculating the Jacobian for 'site' is not yet implemented.")
+        else:
+            raise ValueError(f"Invalid object type specified: {object_type}")
+        
         return np.copy(self._J6N)
+
+
+
+
+    def _get_link_index(self, name):
+        """Helper function to get link index from name."""
+        try:
+            # Method 1: Direct lookup if body_names includes simple names
+            if hasattr(self.articulation_view, 'body_names'):
+                link_list = self.articulation_view.body_names
+                #print("link_list: ", link_list)
+                
+                # Try direct name first
+                if name in link_list:
+                    return link_list.index(name)
+                
+                # Try with prefix (your original approach)
+                if link_list and '_' in link_list[0]:
+                    prefix = link_list[0].split('_')[0]
+                    full_name = f"{prefix}_{name}"
+                    if full_name in link_list:
+                        return link_list.index(full_name)
+            
+            # Method 2: Use articulation API if available
+            if hasattr(self.articulation, 'get_body_index'):
+                return self.articulation.get_body_index(name)
+            
+            # Method 3: Manual search through body names
+            for i, body_name in enumerate(link_list):
+                if body_name.endswith(name) or name in body_name:
+                    return i
+                    
+            raise ValueError(f"Link '{name}' not found in articulation.")
+            
+        except Exception as e:
+            raise RuntimeError(f"Error finding link '{name}': {str(e)}")
+
+
 
     def M(self, q=None):
         """
@@ -357,7 +443,7 @@ class IsaacsimConfig:
             # Save current joint state
             old_q = self.articulation_view.get_joint_positions()
             self.articulation_view.set_joint_positions(q)
-            self.world.step(render=False)  # required to update PhysX buffers
+            ### self.world.step(render=False)  # required to update PhysX buffers
 
         # Get mass matrix
         M = self.articulation_view.get_mass_matrices()
@@ -366,7 +452,7 @@ class IsaacsimConfig:
         if not self.use_sim_state and q is not None:
             # Restore previous state
             self.articulation_view.set_joint_positions(old_q)
-            self.world.step(render=False)
+            ### self.world.step(render=False)
 
         return M
 
@@ -383,14 +469,16 @@ class IsaacsimConfig:
         object_type : str
             One of "body", "geom", or "site".
         """
-        #print(f"R: {name}, q: {q}, object_type: {object_type}")
+        '''
+        
+        print(f"R: {name}, q: {q}, object_type: {object_type}")
         if not self.use_sim_state and q is not None:
             old_q = self.articulation_view.get_joint_positions()
             self.articulation_view.set_joint_positions(q)
             #self._world.step(render=False)
+        '''
 
         if object_type == "body":
-            print(f"Finding body with name: {name}")
             # Look for a link prim ending in the given name
             prim_path = self._get_prim_path(name)
         elif object_type in ["site", "geom"]:
@@ -412,9 +500,12 @@ class IsaacsimConfig:
             [matrix[1][0], matrix[1][1], matrix[1][2]],
             [matrix[2][0], matrix[2][1], matrix[2][2]]
         ])
+
+        '''
         if not self.use_sim_state and q is not None:
             self.articulation_view.set_joint_positions(old_q)
             #self._world.step(render=False)
+        '''
 
         return R
             
@@ -433,10 +524,11 @@ class IsaacsimConfig:
         """
         #TODO outsource this to a common function and check is can be qued for EE and 
         # end_effector at the same time, or checked which is used for the current robot
-        if name == "EE": name = "end_effector"
+        if name == "EE": name = self.ee_name
+        '''
         if not self.use_sim_state and q is not None:
             old_q, old_dq, old_u = self._load_state(q)
-
+        '''
         prim_path = self._get_prim_path(name)
         prim = self.stage.GetPrimAtPath(prim_path)
 
@@ -449,10 +541,10 @@ class IsaacsimConfig:
 
         # Convert to [w, x, y, z] NumPy array 
         quat_np = np.array([quat.GetReal(), *quat.GetImaginary()])
-
+        '''
         if not self.use_sim_state and q is not None:
             self._load_state(old_q, old_dq, old_u)
-
+        '''
         return quat_np
 
     def C(self, q=None, dq=None):
@@ -499,7 +591,8 @@ class IsaacsimConfig:
         np.ndarray
             World position [x, y, z] of the object.
         """
-        if name == "EE": name = "end_effector"
+        if name == "EE": name = self.ee_name
+        '''
         if x is not None and not np.allclose(x, 0):
             raise Exception("x offset currently not supported: ", x)
 
@@ -507,8 +600,8 @@ class IsaacsimConfig:
         if not self.use_sim_state and q is not None:
             old_q = self.articulation_view.get_joint_positions()
             self.articulation_view.set_joint_positions(q)
-            self.world.step(render=False)
-
+            ### self.world.step(render=False)
+        '''
         prim_path = None
         #print(f"Tx: name={name}, q={q}, object_type={object_type}")
 
@@ -539,12 +632,12 @@ class IsaacsimConfig:
         
         matrix = omni.usd.utils.get_world_transform_matrix(prim)
         position = matrix.ExtractTranslation()
-
+        '''
         # Restore state if needed
         if not self.use_sim_state and q is not None:
             self.articulation_view.set_joint_positions(old_q)
-            self.world.step(render=False)
-            
+            ### self.world.step(render=False)
+        '''
         Tx =np.array([position[0], position[1], position[2]])
         return Tx
 
@@ -584,6 +677,7 @@ class IsaacsimConfig:
     def _get_prim_path(self, name):
         for prim in self.stage.Traverse():
             # Check if the prim path ends with the desired name
+            #print(f"Checking prim: {prim.GetPath()}")
             if str(prim.GetPath()).endswith(name):
                 return prim.GetPath()
         return None

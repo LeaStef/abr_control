@@ -20,7 +20,10 @@ class IsaacSim(Interface):
         self.robot_config = robot_config
         self.dt = dt  # time step
         self.count = 0  # keep track of how many times send forces is called
-        self.ee_name = "end_effector"  # EE
+
+        # ee_name = "ft_frame" for ur2 
+        # #"end_effector"  for jaco2
+
         #self.q = np.zeros(self.robot_config.N_JOINTS)  # joint angles
         #self.initial_q = np.zeros(self.robot_config.N_JOINTS)  # joint angles
         #self.dq = np.zeros(self.robot_config.N_JOINTS)  # joint_velocities
@@ -93,10 +96,40 @@ class IsaacSim(Interface):
             import_config=import_config,
             prim_path=self.prim_path
         )
+        '''
+        
+        
+        if self.robot_config.robot == "ur5":
+            robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
+            self.ee_name = "flange" #"ft_frame" # end-effector name for UR5
+        elif self.robot_config.robot == "jaco2":
+            robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
+            self.ee_name = "end_effector"  # end-effector name for Jaco2
+        elif self.robot_config.robot == "h1":   
+            robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
+            #TODO check this
+            self.ee_name = "EE"  # end-effector name for H1
 
+
+        assets_root_path = get_assets_root_path()
+        stage_utils.add_reference_to_stage(
+                 usd_path=assets_root_path + robot_path,
+                 prim_path=self.prim_path,
+                 )
+        robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
 
 
         '''
+        ## LOAD UR5 robot
+        assets_root_path = get_assets_root_path()
+        stage_utils.add_reference_to_stage(
+                 usd_path=assets_root_path + "/Isaac/Robots/UniversalRobots/ur5/ur5.usd",
+                 # Robots/Kinova/Jaco2/J2N7S300/j2n7s300_instanceable.usd   -->  7 DOF arm , not compatible with ABR controller
+                 prim_path=self.prim_path,
+                 )
+        robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
+
+        
         ## LOAD Jaco2 robot
         assets_root_path = get_assets_root_path()
         stage_utils.add_reference_to_stage(
@@ -106,7 +139,7 @@ class IsaacSim(Interface):
                  )
         robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
         
-        '''
+        
         # Load H1 robot
         self.h1 = H1FlatTerrainPolicy(
             prim_path=self.prim_path,
@@ -152,7 +185,8 @@ class IsaacSim(Interface):
             self.articulation_view,
             self.joint_pos_addrs,
             self.joint_vel_addrs,
-            self.prim_path
+            self.prim_path,
+            self.ee_name
         )
         
 
@@ -208,22 +242,48 @@ class IsaacSim(Interface):
 
         q : numpy.array
                 the target joint angles [radians]
+        
+        print("q: ", q)
+        print("robot joint pos: ", self.articulation.get_joint_positions())
+        q_all = self.get_feedback()["q"]
+        print("q_all: ", q_all)
+        #TODO change that to variable number of joints
+        #q_all = q_all[:self.robot_config.N_JOINTS]  #
+        q_all[:6] = q
+        print("result: ", q_all)
+        self.articulation_view.set_joint_positions(q_all)
         """
+        print("len(q) : ", len(q))
+        print("robot_config.N_JOINTS: ", self.robot_config.N_JOINTS)
+        # Check if the length of q is greater than the number of joints
+        if len(q) > self.robot_config.N_JOINTS:
+            q_new = q[:self.robot_config.N_JOINTS]  
+            self.articulation_view.set_joint_positions(q_new)
+        elif self.robot_config.N_ALL_JOINTS > self.robot_config.N_JOINTS:
+            q_new = self.articulation_view.get_joint_positions()  # Shape: (1, 12)
+            q_new[0, :self.robot_config.N_JOINTS] = q  # Update first N_JOINTS for environment 0
+            self.articulation_view.set_joint_positions(q_new)
+        else: 
+            self.articulation_view.set_joint_positions(q)
+      
 
 
     
-    def get_feedback(self):
+    def get_feedback(self, all_joints=False):
         """Return a dictionary of information needed by the controller.
 
         Returns the joint angles and joint velocities in [rad] and [rad/sec],
         respectively
         """
-        # Get the joint angles and velocities
+        if not all_joints:
+            # Get the joint angles and velocities
+            self.q = self.articulation.get_joint_positions()[:self.robot_config.N_JOINTS]  # only take the first N_JOINTS
+            self.dq = self.articulation.get_joint_velocities()[:self.robot_config.N_JOINTS] 
+        else:
+            # Get the joint angles and velocities for all joints
+            self.q = self.articulation.get_joint_positions()
+            self.dq = self.articulation.get_joint_velocities()       
         
-        self.q = self.articulation.get_joint_positions()
-        #self.q = q[:self.robot_config.N_JOINTS]  # only take the first N_JOINTS
-        self.dq = self.articulation.get_joint_velocities()
-        #self.dq = dq[:self.robot_config.N_JOINTS]  # only take the first N_JOINTS
         return {"q": self.q, "dq": self.dq}
 
 
@@ -270,10 +330,14 @@ class IsaacSim(Interface):
         xyz : np.ndarray
             Target world position [x, y, z] in meters
         """
-        # Assume prim is under robot or scene root
-        #prim_path = f"{self.prim_path}/{name}"  
+       
         world_path = "/World"
         prim_path = f"{world_path}/{name}" 
+        print("prim_path:", prim_path)
+        prim = self.stage.GetPrimAtPath(prim_path)
+
+        prim.set_world_pose(xyz, np.array([0., 0., 0., 1.])) # set the position and orientation of the object
+
 
         print("prim_path:", prim_path)
         #from omni.isaac.core.utils.prims import set_prim_world_position
