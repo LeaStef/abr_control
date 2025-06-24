@@ -186,7 +186,8 @@ class IsaacSim(Interface):
             self.joint_pos_addrs,
             self.joint_vel_addrs,
             self.prim_path,
-            self.ee_name
+            self.ee_name,
+            joint_names
         )
         
 
@@ -220,9 +221,24 @@ class IsaacSim(Interface):
             index = dof_name_to_index[joint_name]
 
         return index
+    '''   
+    def send_forces(self, u):
+        """Applies the set of torques u to the arm."""
         
-
-
+        # Create full torque vector for all DOFs
+        total_dofs = self.articulation_view.num_dof
+        full_torques = np.zeros(total_dofs)
+        
+        # Apply control torques to the controlled joints
+        full_torques[:len(u)] = u
+        
+        # Apply the control signal
+        self.articulation_view.set_joint_efforts(full_torques)
+        
+        # Move simulation ahead one time step
+        self.world.step(render=True)
+        
+    '''
     def send_forces(self, u):
         """Applies the set of torques u to the arm. If interfacing to
         a simulation, also moves dynamics forward one time step.
@@ -235,7 +251,7 @@ class IsaacSim(Interface):
 
          # move simulation ahead one time step
         self.world.step(render=True) # execute one physics step and one rendering step
-
+    
 
     def send_target_angles(self, q):
         """Moves the arm to the specified joint angles
@@ -259,12 +275,24 @@ class IsaacSim(Interface):
         if len(q) > self.robot_config.N_JOINTS:
             q_new = q[:self.robot_config.N_JOINTS]  
             self.articulation_view.set_joint_positions(q_new)
+        elif len(q) < self.robot_config.N_ALL_JOINTS :
+            q_new = self.articulation_view.get_joint_positions()  # Shape: (1, 12)
+            q_new[0, :len(q)] = q  # Update first N_JOINTS for environment 0
+            self.articulation_view.set_joint_positions(q_new)
+        else: 
+            self.articulation_view.set_joint_positions(q)
+      
+        '''
+        if len(q) > self.robot_config.N_JOINTS:
+            q_new = q[:self.robot_config.N_JOINTS]  
+            self.articulation_view.set_joint_positions(q_new)
         elif self.robot_config.N_ALL_JOINTS > self.robot_config.N_JOINTS:
             q_new = self.articulation_view.get_joint_positions()  # Shape: (1, 12)
             q_new[0, :self.robot_config.N_JOINTS] = q  # Update first N_JOINTS for environment 0
             self.articulation_view.set_joint_positions(q_new)
         else: 
             self.articulation_view.set_joint_positions(q)
+        '''
       
 
 

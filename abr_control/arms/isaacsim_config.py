@@ -127,7 +127,7 @@ class IsaacsimConfig:
         self.robot = xml_file
         self.use_sim_state = use_sim_state
 
-    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path, ee_name):
+    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path, ee_name, joint_names):
 
         """Called by the interface once the Mujoco simulation is created,
         this connects the config to the simulator so it can access the
@@ -160,7 +160,9 @@ class IsaacsimConfig:
         #TODO: this is a hack for the jaco2 robot, which has 12 joints
         #self.N_JOINTS = len(self.joint_vel_addrs)
         #self.N_JOINTS = self.articulation_view.num_dof
-        self.N_JOINTS = 6
+        print("len(joint_names): ", len(joint_names))
+        #TODO always only considers the first N joints 
+        self.N_JOINTS = len(joint_names)
         print (f"Number of controllable joints: {self.N_JOINTS}")
         # number of joints in the IsaacSim simulation
         self.N_ALL_JOINTS = self.articulation_view.num_dof
@@ -224,7 +226,46 @@ class IsaacsimConfig:
         return old_q, old_dq, old_u
 
 
+    
+    def g(self, q=None):
+        """
+        Returns the joint-space forces due to gravity, Coriolis, and centrifugal effects
+        in Isaac Sim (equivalent to MuJoCo's qfrc_bias).
 
+        Parameters
+        ----------
+        q: np.ndarray, optional (Default: None)
+            Joint positions to compute the bias forces at. If None, uses current sim state.
+        """
+        # Compute gravity and Coriolis/centrifugal separately
+        gravity = self.articulation_view.get_generalized_gravity_forces()
+        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces()
+        
+        print(f"Raw gravity shape: {gravity.shape}")
+        print(f"Raw coriolis shape: {coriolis.shape}")
+        
+        # Total generalized bias forces
+        g_full = gravity + coriolis
+        print(f"Combined g_full shape: {g_full.shape}")
+        
+        # Handle batch dimension if present
+        if g_full.ndim == 2:
+            print(f"Detected batch dimension, original shape: {g_full.shape}")
+            if g_full.shape[0] == 1:
+                g_full = g_full[0]  # Remove batch dimension
+                print(f"After removing batch dimension: {g_full.shape}")
+        
+        if q is not None:
+            print(f"q shape: {q.shape}")
+            # If q is provided, ensure g matches the size of q
+            if len(g_full) != len(q):
+                print(f"Truncating g from {len(g_full)} to {len(q)} elements")
+                g_full = g_full[:len(q)]
+        
+        print(f"Final g shape: {g_full.shape}")
+        return -g_full
+        '''
+    
     def g(self, q=None):
         """
         Returns the joint-space forces due to gravity, Coriolis, and centrifugal effects
@@ -260,8 +301,7 @@ class IsaacsimConfig:
             ### self.world.step(render=False)
 
         return -g  # match MuJoCo's negative qfrc_bias convention
-
-    
+    '''
 
     def dJ(self, name, q=None, dq=None, x=None):
         """Returns the derivative of the Jacobian wrt to time
@@ -438,21 +478,27 @@ class IsaacsimConfig:
         np.ndarray
             Dense inertia matrix (DoF x DoF)
         """
-
+        '''
+        
         if not self.use_sim_state and q is not None:
             # Save current joint state
             old_q = self.articulation_view.get_joint_positions()
             self.articulation_view.set_joint_positions(q)
             ### self.world.step(render=False)  # required to update PhysX buffers
-
+        '''
+     
         # Get mass matrix
         M = self.articulation_view.get_mass_matrices()
-        #print(f"Mass matrix M: {M}")
+        if q is not None:
+            M = M[0, :len(q), :len(q)]  # Ensure M is square and matches q size
+    
 
+        '''
         if not self.use_sim_state and q is not None:
             # Restore previous state
             self.articulation_view.set_joint_positions(old_q)
             ### self.world.step(render=False)
+        '''
 
         return M
 
@@ -574,7 +620,34 @@ class IsaacsimConfig:
         # TODO if ever required
         raise NotImplementedError
 
-    def Tx(self, name, q=None, x=None, object_type="body"):
+    def Tx(self, name, q=None, object_type="body"):
+        """Simplified version that only gets current position without state changes."""
+        #TODO handle q
+        if name == "EE":
+            name = self.ee_name
+        
+        # Get prim path
+        if object_type in ["body", "link"]:
+            prim_path = self._get_prim_path(name)
+        elif object_type == "joint":
+            # For joints, you might want the parent link position
+            prim_path = self._get_prim_path(name)
+        else:
+            raise ValueError(f"Unsupported object_type: {object_type}")
+        
+        # Get world position
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            raise RuntimeError(f"Invalid prim at path: {prim_path}")
+        
+        matrix = omni.usd.utils.get_world_transform_matrix(prim)
+        position = matrix.ExtractTranslation()
+        
+        return np.array([position[0], position[1], position[2]], dtype=np.float64)
+
+
+
+    def Tx_old(self, name, q=None, x=None, object_type="body"):
         """ Returns the world-frame Cartesian position of a named link, joint, or site.
 
         Parameters
