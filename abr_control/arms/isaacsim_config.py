@@ -127,7 +127,7 @@ class IsaacsimConfig:
         self.robot = xml_file
         self.use_sim_state = use_sim_state
 
-    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path, ee_name, joint_names):
+    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path, ee_link_name):
 
         """Called by the interface once the Mujoco simulation is created,
         this connects the config to the simulator so it can access the
@@ -153,16 +153,10 @@ class IsaacsimConfig:
         self.joint_pos_addrs = np.copy(joint_pos_addrs)
         self.joint_vel_addrs = np.copy(joint_vel_addrs)
         self.prim_path = prim_path
-        self.ee_name = ee_name
+        self.ee_link_name = ee_link_name
 
         
-        # number of controllable joints in the robot arm
-        #TODO: this is a hack for the jaco2 robot, which has 12 joints
-        #self.N_JOINTS = len(self.joint_vel_addrs)
-        #self.N_JOINTS = self.articulation_view.num_dof
-        print("len(joint_names): ", len(joint_names))
-        #TODO always only considers the first N joints 
-        self.N_JOINTS = len(joint_names)
+        self.N_JOINTS = len(self.joint_vel_addrs)
         print (f"Number of controllable joints: {self.N_JOINTS}")
         # number of joints in the IsaacSim simulation
         self.N_ALL_JOINTS = self.articulation_view.num_dof
@@ -193,37 +187,6 @@ class IsaacsimConfig:
         self._x = np.ones(4)
         self.N_ALL_JOINTS = self.N_ALL_JOINTS
 
-    def _load_state(self, q, dq=None, u=None):
-        """Change the current joint angles
-
-        Parameters
-        ----------
-        q: np.array
-            The set of joint angles to move the arm to [rad]
-        dq: np.array
-            The set of joint velocities to move the arm to [rad/sec]
-        u: np.array
-            The set of joint forces to apply to the arm joints [Nm]
-        """
-
-        old_q = np.copy(self.articulation.get_joint_positions())
-        old_dq = np.copy(self.articulation.get_joint_velocities())
-        old_u = np.copy(self.articulation.get_applied_joint_efforts())
-
-        # update positions to specified state
-        self.articulation.set_joint_positions(q)  # set the joint positions in the articulation view
-
-        if dq is not None:
-            #self.data.qvel[self.joint_vel_addrs] = np.copy(dq)
-            self.articulation_view.set_joint_velocities(dq)
-        if u is not None:
-            #self.data.ctrl[:] = np.copy(u)
-            self.articulation_view.set_joint_efforts(u)
-
-        # move simulation forward to calculate new kinematic information
-        self.world.step(render=True) # execute one physics step and one rendering step
-
-        return old_q, old_dq, old_u
 
 
     
@@ -240,68 +203,23 @@ class IsaacsimConfig:
         # Compute gravity and Coriolis/centrifugal separately
         gravity = self.articulation_view.get_generalized_gravity_forces()
         coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces()
-        
-        print(f"Raw gravity shape: {gravity.shape}")
-        print(f"Raw coriolis shape: {coriolis.shape}")
         
         # Total generalized bias forces
         g_full = gravity + coriolis
-        print(f"Combined g_full shape: {g_full.shape}")
         
         # Handle batch dimension if present
         if g_full.ndim == 2:
-            print(f"Detected batch dimension, original shape: {g_full.shape}")
             if g_full.shape[0] == 1:
                 g_full = g_full[0]  # Remove batch dimension
-                print(f"After removing batch dimension: {g_full.shape}")
         
         if q is not None:
-            print(f"q shape: {q.shape}")
             # If q is provided, ensure g matches the size of q
             if len(g_full) != len(q):
-                print(f"Truncating g from {len(g_full)} to {len(q)} elements")
                 g_full = g_full[:len(q)]
         
-        print(f"Final g shape: {g_full.shape}")
         return -g_full
-        '''
+        
     
-    def g(self, q=None):
-        """
-        Returns the joint-space forces due to gravity, Coriolis, and centrifugal effects
-        in Isaac Sim (equivalent to MuJoCo's qfrc_bias).
-
-        Parameters
-        ----------
-        q: np.ndarray, optional (Default: None)
-            Joint positions to compute the bias forces at. If None, uses current sim state.
-        """
-        if not self.use_sim_state and q is not None:
-            old_q, old_dq, old_u = self._load_state(q)
-
-            # Set new state (velocities to zero to isolate gravity)
-            self.articulation_view.set_joint_positions(q)
-            self.articulation_view.set_joint_velocities(np.zeros_like(q))
-
-            ### self.world.step(render=False)
-
-        # Compute gravity and Coriolis/centrifugal separately
-        gravity = self.articulation_view.get_generalized_gravity_forces()
-        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces()
-
-        # Total generalized bias forces
-        g = gravity + coriolis
-        # print("GRAVITY ", gravity)
-        # print("CORIOLIS ", coriolis)
-
-        if not q is not None:
-            # Restore old state
-            self.articulation_view.set_joint_positions(old_q)
-            self.articulation_view.set_joint_velocities(old_dq)
-            ### self.world.step(render=False)
-
-        return -g  # match MuJoCo's negative qfrc_bias convention
-    '''
 
     def dJ(self, name, q=None, dq=None, x=None):
         """Returns the derivative of the Jacobian wrt to time
@@ -353,7 +271,7 @@ class IsaacsimConfig:
         
         # Handle special case mappings
         if name == "EE": 
-            name = self.ee_name
+            name = self.ee_link_name
         
         # Check for unsupported features
         if x is not None and not np.allclose(x, 0):
@@ -552,7 +470,6 @@ class IsaacsimConfig:
             self.articulation_view.set_joint_positions(old_q)
             #self._world.step(render=False)
         '''
-
         return R
             
         
@@ -570,11 +487,8 @@ class IsaacsimConfig:
         """
         #TODO outsource this to a common function and check is can be qued for EE and 
         # end_effector at the same time, or checked which is used for the current robot
-        if name == "EE": name = self.ee_name
-        '''
-        if not self.use_sim_state and q is not None:
-            old_q, old_dq, old_u = self._load_state(q)
-        '''
+        if name == "EE": name = self.ee_link_name
+
         prim_path = self._get_prim_path(name)
         prim = self.stage.GetPrimAtPath(prim_path)
 
@@ -587,10 +501,7 @@ class IsaacsimConfig:
 
         # Convert to [w, x, y, z] NumPy array 
         quat_np = np.array([quat.GetReal(), *quat.GetImaginary()])
-        '''
-        if not self.use_sim_state and q is not None:
-            self._load_state(old_q, old_dq, old_u)
-        '''
+      
         return quat_np
 
     def C(self, q=None, dq=None):
@@ -624,7 +535,7 @@ class IsaacsimConfig:
         """Simplified version that only gets current position without state changes."""
         #TODO handle q
         if name == "EE":
-            name = self.ee_name
+            name = self.ee_link_name
         
         # Get prim path
         if object_type in ["body", "link"]:
@@ -664,7 +575,7 @@ class IsaacsimConfig:
         np.ndarray
             World position [x, y, z] of the object.
         """
-        if name == "EE": name = self.ee_name
+        if name == "EE": name = self.ee_link_name
         '''
         if x is not None and not np.allclose(x, 0):
             raise Exception("x offset currently not supported: ", x)

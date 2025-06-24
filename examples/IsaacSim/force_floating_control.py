@@ -15,8 +15,8 @@ from abr_control.interfaces.nv_isaacsim import IsaacSim
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    #arm_model = "ur5"
-    arm_model = "jaco2"
+    arm_model = "ur5"
+    #arm_model = "jaco2"
 # initialize our robot config
 robot_config = arm(arm_model)
 # create the IsaacSim interface and connect up
@@ -24,22 +24,23 @@ interface = IsaacSim(robot_config, dt=0.001)
 interface.connect(joint_names=[f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))])
 interface.send_target_angles(robot_config.START_ANGLES)
 
+
 # instantiate the controller
 ctrlr = Floating(robot_config, task_space=False, dynamic=True)
 
 # set up arrays for tracking end-effector and target position
-ee_name = "end_effector"  # EE
+
 ee_track = []
 q_track = []
 
 try:
     # get the end-effector's initial position
-    feedback = interface.get_feedback()
-    start = robot_config.Tx(ee_name, q=feedback["q"])
+    feedback = interface.get_feedback(all_joints=True)
+    start = robot_config.Tx(interface.ee_name, q=feedback["q"])
     print("\nSimulation starting...\n")
     while 1:
         # get joint angle and velocity feedback
-        feedback = interface.get_feedback()
+        feedback = interface.get_feedback(all_joints=True)
 
         # calculate the control signal
         u = ctrlr.generate(q=feedback["q"], dq=feedback["dq"])
@@ -48,7 +49,7 @@ try:
         interface.send_forces(u)
 
         # calculate the position of the hand
-        hand_xyz = robot_config.Tx(ee_name, q=feedback["q"])
+        hand_xyz = robot_config.Tx(interface.ee_name, q=feedback["q"])
         # track end effector position
         ee_track.append(np.copy(hand_xyz))
         q_track.append(np.copy(feedback["q"]))

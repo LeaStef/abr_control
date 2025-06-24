@@ -91,24 +91,28 @@ class IsaacSim(Interface):
         omni.kit.commands.execute(
             "MJCFCreateAsset", 
             #mjcf_path=extension_path + "/data/mjcf/nv_ant.xml",
-            mjcf_path=extension_path + "/data/mjcf/nv_humanoid.xml",
-            #mjcf_path=self.robot_config.xml_file,
+            #mjcf_path=extension_path + "/data/mjcf/nv_humanoid.xml",
+            mjcf_path=self.robot_config.xml_file,
             import_config=import_config,
             prim_path=self.prim_path
         )
+        self.ee_name = "flange" #"ft_frame" # end-effector name for UR5
         '''
         
         
         if self.robot_config.robot == "ur5":
             robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
             self.ee_name = "flange" #"ft_frame" # end-effector name for UR5
+            robot_joint_nr = 6  # UR5 has 6 joints
         elif self.robot_config.robot == "jaco2":
             robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
             self.ee_name = "end_effector"  # end-effector name for Jaco2
+            robot_joint_nr = 6  # Jaco2 has 6 joints
         elif self.robot_config.robot == "h1":   
             robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
             #TODO check this
             self.ee_name = "EE"  # end-effector name for H1
+            robot_joint_nr = 6  # H1 has 6 joints
 
 
         assets_root_path = get_assets_root_path()
@@ -117,41 +121,7 @@ class IsaacSim(Interface):
                  prim_path=self.prim_path,
                  )
         robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
-
-
-        '''
-        ## LOAD UR5 robot
-        assets_root_path = get_assets_root_path()
-        stage_utils.add_reference_to_stage(
-                 usd_path=assets_root_path + "/Isaac/Robots/UniversalRobots/ur5/ur5.usd",
-                 # Robots/Kinova/Jaco2/J2N7S300/j2n7s300_instanceable.usd   -->  7 DOF arm , not compatible with ABR controller
-                 prim_path=self.prim_path,
-                 )
-        robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
-
-        
-        ## LOAD Jaco2 robot
-        assets_root_path = get_assets_root_path()
-        stage_utils.add_reference_to_stage(
-                 usd_path=assets_root_path + "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd",
-                 # Robots/Kinova/Jaco2/J2N7S300/j2n7s300_instanceable.usd   -->  7 DOF arm , not compatible with ABR controller
-                 prim_path=self.prim_path,
-                 )
-        robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
-        
-        
-        # Load H1 robot
-        self.h1 = H1FlatTerrainPolicy(
-            prim_path=self.prim_path,
-            name=self.name,
-            usd_path=assets_root_path + "/Isaac/Robots/Unitree/H1/h1.usd",
-            position=np.array([0, 0, 1.05]),
-        )
-        stage_utils.add_reference_to_stage(
-            usd_path=assets_root_path + "/Isaac/Robots/Unitree/H1/h1.usd",
-            prim_path=self.prim_path,
-        )
-        '''      
+ 
         # Resetting the world needs to be called before querying anything related to an articulation specifically.
         # Its recommended to always do a reset after adding your assets, for physics handles to be propagated properly
         self.world.reset()
@@ -176,6 +146,13 @@ class IsaacSim(Interface):
         self.joint_vel_addrs = []
         self.joint_dyn_addrs = []
 
+        if joint_names is None:
+            # get the joint names from the articulation view
+            joint_nr= robot_joint_nr
+        else:
+            joint_nr = len(joint_names)
+           
+
 
         print("Connecting to robot config...")
         self.robot_config._connect(
@@ -187,7 +164,7 @@ class IsaacSim(Interface):
             self.joint_vel_addrs,
             self.prim_path,
             self.ee_name,
-            joint_names
+            joint_nr
         )
         
 
@@ -221,7 +198,7 @@ class IsaacSim(Interface):
             index = dof_name_to_index[joint_name]
 
         return index
-    '''   
+      
     def send_forces(self, u):
         """Applies the set of torques u to the arm."""
         
@@ -231,9 +208,11 @@ class IsaacSim(Interface):
         
         # Apply control torques to the controlled joints
         full_torques[:len(u)] = u
+        print("U: ", u)
         
         # Apply the control signal
         self.articulation_view.set_joint_efforts(full_torques)
+        #self.articulation_view.set_joint_efforts(np.ones(total_dofs) * -10000)  # Set the joint efforts (torques)
         
         # Move simulation ahead one time step
         self.world.step(render=True)
@@ -251,7 +230,7 @@ class IsaacSim(Interface):
 
          # move simulation ahead one time step
         self.world.step(render=True) # execute one physics step and one rendering step
-    
+    ''' 
 
     def send_target_angles(self, q):
         """Moves the arm to the specified joint angles
@@ -281,7 +260,8 @@ class IsaacSim(Interface):
             self.articulation_view.set_joint_positions(q_new)
         else: 
             self.articulation_view.set_joint_positions(q)
-      
+
+        self.world.step(render=True)      
         '''
         if len(q) > self.robot_config.N_JOINTS:
             q_new = q[:self.robot_config.N_JOINTS]  
