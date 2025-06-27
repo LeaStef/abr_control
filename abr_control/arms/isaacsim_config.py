@@ -127,7 +127,7 @@ class IsaacsimConfig:
         self.robot = xml_file
         self.use_sim_state = use_sim_state
 
-    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path, ee_link_name):
+    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path):
 
         """Called by the interface once the Mujoco simulation is created,
         this connects the config to the simulator so it can access the
@@ -153,39 +153,38 @@ class IsaacsimConfig:
         self.joint_pos_addrs = np.copy(joint_pos_addrs)
         self.joint_vel_addrs = np.copy(joint_vel_addrs)
         self.prim_path = prim_path
-        self.ee_link_name = ee_link_name
 
         
         self.N_JOINTS = len(self.joint_vel_addrs)
         print (f"Number of controllable joints: {self.N_JOINTS}")
         # number of joints in the IsaacSim simulation
-        self.N_ALL_JOINTS = self.articulation_view.num_dof
-        print (f"Number of ALL joints in simulation: {self.N_ALL_JOINTS}")
+        N_ALL_JOINTS = self.articulation_view.num_dof
+        print (f"Number of ALL joints in simulation: {N_ALL_JOINTS}")
 
         # need to calculate the joint_vel_addrs indices in flat vectors returned
         # for the Jacobian
         self.jac_indices = np.hstack(
             # 6 because position and rotation Jacobians are 3 x N_JOINTS
-            [self.joint_vel_addrs + (ii * self.N_ALL_JOINTS) for ii in range(3)]
+            [self.joint_vel_addrs + (ii * N_ALL_JOINTS) for ii in range(3)]
         )
 
         # for the inertia matrix
         self.M_indices = [
-            ii * self.N_ALL_JOINTS + jj
+            ii * N_ALL_JOINTS + jj
             for jj in self.joint_vel_addrs
             for ii in self.joint_vel_addrs
         ]
 
         # a place to store data returned from Mujoco
         self._g = np.zeros(self.N_JOINTS)
-        self._J3NP = np.zeros((3, self.N_ALL_JOINTS))
-        self._J3NR = np.zeros((3, self.N_ALL_JOINTS))
+        self._J3NP = np.zeros((3, N_ALL_JOINTS))
+        self._J3NR = np.zeros((3, N_ALL_JOINTS))
         self._J6N = np.zeros((6, self.N_JOINTS))
-        self._MNN = np.zeros((self.N_ALL_JOINTS, self.N_ALL_JOINTS))
+        self._MNN = np.zeros((N_ALL_JOINTS, N_ALL_JOINTS))
         self._R9 = np.zeros(9)
         self._R = np.zeros((3, 3))
         self._x = np.ones(4)
-        self.N_ALL_JOINTS = self.N_ALL_JOINTS
+        self.N_ALL_JOINTS = N_ALL_JOINTS
 
 
 
@@ -269,9 +268,6 @@ class IsaacsimConfig:
             Last 3 rows: angular velocity Jacobian (Jω)
         """
         
-        # Handle special case mappings
-        if name == "EE": 
-            name = self.ee_link_name
         
         # Check for unsupported features
         if x is not None and not np.allclose(x, 0):
@@ -283,17 +279,7 @@ class IsaacsimConfig:
         elif not hasattr(self, 'controlled_dof_indices'):
             self.controlled_dof_indices = list(range(6))  # Default: first 6 DOFs
         
-        '''
-        # Handle joint state setting if provided
-        if q is not None:
-            # Store current state if we need to restore it
-            old_positions = self.articulation_view.get_joint_positions(clone=True)
-            # Set new joint positions
-            self.articulation_view.set_joint_positions(q.reshape(1, -1))
-            # Forward the simulation to update Jacobians
-            # You might need to call a simulation step here depending on your setup
-        '''
-    
+     
         if object_type == "body":
             # Get Jacobians from articulation view
             jacobians = self.articulation_view.get_jacobians(clone=True)
@@ -303,8 +289,14 @@ class IsaacsimConfig:
                 raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
                 
             # Get link index
-            link_index = self._get_link_index(name)
-                
+            # General
+            link_index = self.articulation_view.get_link_index("j2n6s300_end_effector")   
+            # UR
+            #link_index = self.articulation_view.get_link_index("wrist_3_link")
+            #link_index = self.articulation_view.get_link_index("j2n6s300_end_effector")
+            print("name: ", name)
+            print("link index: ", link_index)
+           
             # Extract Jacobian for specific link
             env_idx = 0  # Assuming single environment
                 
@@ -346,79 +338,121 @@ class IsaacsimConfig:
 
 
 
-
-    def _get_link_index(self, name):
-        """Helper function to get link index from name."""
-        try:
-            # Method 1: Direct lookup if body_names includes simple names
-            if hasattr(self.articulation_view, 'body_names'):
-                link_list = self.articulation_view.body_names
-                #print("link_list: ", link_list)
-                
-                # Try direct name first
-                if name in link_list:
-                    return link_list.index(name)
-                
-                # Try with prefix (your original approach)
-                if link_list and '_' in link_list[0]:
-                    prefix = link_list[0].split('_')[0]
-                    full_name = f"{prefix}_{name}"
-                    if full_name in link_list:
-                        return link_list.index(full_name)
-            
-            # Method 2: Use articulation API if available
-            if hasattr(self.articulation, 'get_body_index'):
-                return self.articulation.get_body_index(name)
-            
-            # Method 3: Manual search through body names
-            for i, body_name in enumerate(link_list):
-                if body_name.endswith(name) or name in body_name:
-                    return i
-                    
-            raise ValueError(f"Link '{name}' not found in articulation.")
-            
-        except Exception as e:
-            raise RuntimeError(f"Error finding link '{name}': {str(e)}")
-
-
-
-    def M(self, q=None):
-        """
-        Return the joint-space inertia matrix M(q) using Isaac Sim.
-
-        Parameters
-        ----------
-        q : np.ndarray, optional
-            Joint positions. If None, use current sim state.
-
-        Returns
-        -------
-        np.ndarray
-            Dense inertia matrix (DoF x DoF)
-        """
-        '''
-        
-        if not self.use_sim_state and q is not None:
-            # Save current joint state
-            old_q = self.articulation_view.get_joint_positions()
-            self.articulation_view.set_joint_positions(q)
-            ### self.world.step(render=False)  # required to update PhysX buffers
-        '''
-     
-        # Get mass matrix
-        M = self.articulation_view.get_mass_matrices()
-        if q is not None:
-            M = M[0, :len(q), :len(q)]  # Ensure M is square and matches q size
     
+    def M(self, q=None, indices=None):
+        """
+        Returns the inertia matrix using Isaac Sim Core API
+        
+        Args:
+            q (np.ndarray, optional): Joint positions
+            indices (optional): Specific articulation indices
+            
+        Returns:
+            np.ndarray: Inertia matrix
+        """
+        M = self._compute_mass_matrix_numerical()
+    
+        # Restore original state if q was provided
+        #if q is not None:
+        #    self.articulation.set_joint_positions(current_positions)
+        #    self.world.step(render=False)
+        
+        return np.copy(M)
 
-        '''
-        if not self.use_sim_state and q is not None:
-            # Restore previous state
-            self.articulation_view.set_joint_positions(old_q)
-            ### self.world.step(render=False)
-        '''
 
+    #TODO: CHECK AND IF NECEAARY remove this, use M instead
+    def _compute_mass_matrix_numerical(self):
+        """
+        Compute mass matrix numerically using finite differences
+        This is a fallback method when direct mass matrix access is not available
+        """
+        import numpy as np
+        
+        M = np.zeros((self.N_JOINTS, self.N_JOINTS))
+        
+        # Small perturbation for finite differences
+        epsilon = 1e-6
+        
+        # Get current state
+        current_pos = self.get_joint_positions()
+        current_vel = self.get_joint_velocities()
+
+        # Zero velocities for clean computation
+        zero_vel = np.zeros_like(current_vel)
+        self.set_joint_velocities(zero_vel)
+        
+        # Compute each column of mass matrix
+        for i in range(self.N_JOINTS):
+            # Create unit acceleration in joint i
+            unit_accel = np.zeros(self.N_JOINTS)
+            unit_accel[i] = 1.0
+            
+            # Compute required torques for this acceleration
+            # Using inverse dynamics: tau = M*qdd + C + G
+            tau = self._compute_inverse_dynamics(current_pos, zero_vel, unit_accel)
+            
+            # The torques give us the i-th column of the mass matrix
+            M[:, i] = tau
+        
         return M
+      
+
+
+    def _compute_inverse_dynamics(self, q, qd, qdd):
+        """
+        Compute inverse dynamics: tau = M*qdd + C + G
+        This is an approximation using IsaacSim's physics engine
+        """
+        '''
+        # Method 1: Use PhysX articulation dynamics (if available)
+        try:
+            # Set desired accelerations and compute required forces
+            full_accelerations = np.zeros(self.robot.num_dof)
+            for i, idx in enumerate(self.joint_vel_addr):
+                full_accelerations[idx] = qdd[i]
+            
+            # Use articulation's compute_efforts method if available
+            if hasattr(self.robot, 'compute_efforts'):
+                efforts = self.robot.compute_efforts(
+                    positions=self.robot.get_joint_positions(),
+                    velocities=self.robot.get_joint_velocities(),
+                    accelerations=full_accelerations
+                )
+                return efforts[self.joint_vel_addr]
+        except:
+            pass
+        '''
+        # Method 2: Numerical approximation
+        # Apply accelerations and measure required torques
+        dt = self.world.get_physics_dt()
+        
+        # Store current state
+        original_pos = self.get_joint_positions()
+        original_vel = self.get_joint_velocities()
+        
+        # Set desired state
+        self.set_joint_positions(q)
+        self.set_joint_velocities(qd)
+        
+        # Compute target velocities after acceleration
+        target_vel = qd + qdd * dt
+        
+        # Use PD control to estimate required torques
+        kp = 1000.0  # High proportional gain
+        kd = 100.0   # Damping
+        
+        pos_error = np.zeros_like(q)  # No position error
+        vel_error = target_vel - qd
+        
+        tau = kp * pos_error + kd * vel_error
+        
+        # Restore original state
+        self.set_joint_positions(original_pos)
+        self.set_joint_velocities(original_vel)
+        
+        return tau
+
+
 
     def R(self, name, q=None, object_type="body"):
         """
@@ -465,11 +499,6 @@ class IsaacsimConfig:
             [matrix[2][0], matrix[2][1], matrix[2][2]]
         ])
 
-        '''
-        if not self.use_sim_state and q is not None:
-            self.articulation_view.set_joint_positions(old_q)
-            #self._world.step(render=False)
-        '''
         return R
             
         
@@ -487,7 +516,6 @@ class IsaacsimConfig:
         """
         #TODO outsource this to a common function and check is can be qued for EE and 
         # end_effector at the same time, or checked which is used for the current robot
-        if name == "EE": name = self.ee_link_name
 
         prim_path = self._get_prim_path(name)
         prim = self.stage.GetPrimAtPath(prim_path)
@@ -531,12 +559,9 @@ class IsaacsimConfig:
         # TODO if ever required
         raise NotImplementedError
 
-    def Tx(self, name, q=None, object_type="body"):
+    def Tx(self, name, q=None, x=None, object_type="body"):
         """Simplified version that only gets current position without state changes."""
-        #TODO handle q
-        if name == "EE":
-            name = self.ee_link_name
-        
+   
         # Get prim path
         if object_type in ["body", "link"]:
             prim_path = self._get_prim_path(name)
@@ -575,7 +600,6 @@ class IsaacsimConfig:
         np.ndarray
             World position [x, y, z] of the object.
         """
-        if name == "EE": name = self.ee_link_name
         '''
         if x is not None and not np.allclose(x, 0):
             raise Exception("x offset currently not supported: ", x)
@@ -641,23 +665,7 @@ class IsaacsimConfig:
         raise NotImplementedError
     
 
-    #TODO remove or see if useful
-    '''
-    def save_current_state(self):
-        old_q = np.copy(self.articulation.get_joint_positions())
-        old_dq = np.copy(self.articulation.get_joint_velocities())
-        old_u = np.copy(self.articulation.get_applied_joint_efforts())
-
-        return old_q, old_dq, old_u
-        '''
-
-    #TODO remove or use 
-    def restore_state(self, state):
-        old_q, old_dq, old_u = state
-        self.articulation.set_joint_positions(old_q)
-        self.articulation.set_joint_velocities(old_dq)
-        self.articulation.set_applied_joint_efforts(old_u)
-
+    # HELPER FUNCTIONS
     def _get_prim_path(self, name):
         for prim in self.stage.Traverse():
             # Check if the prim path ends with the desired name
@@ -666,3 +674,46 @@ class IsaacsimConfig:
                 return prim.GetPath()
         return None
             
+
+    def get_joint_positions(self):
+        """Get current joint positions"""
+        if hasattr(self, 'articulation'):
+            all_positions = self.articulation.get_joint_positions()
+            return all_positions[self.joint_vel_addrs]
+        return None
+
+    def get_joint_velocities(self):
+        """Get current joint velocities"""
+        if hasattr(self, 'articulation'):
+            all_velocities = self.articulation.get_joint_velocities()
+            return all_velocities[self.joint_vel_addrs]
+        return None
+    '''
+    def set_joint_positions(self, positions):
+        """Set joint positions"""
+        if hasattr(self, 'articulation'):
+            full_positions = self.articulation.get_joint_positions()
+            for i, idx in enumerate(range(len(positions))):
+                full_positions[idx] = positions[i]
+            self.articulation.set_joint_positions(full_positions)
+
+    '''
+    def set_joint_positions(self, positions):
+        """Set joint positions"""
+        if hasattr(self, 'articulation'):
+            full_positions = self.articulation.get_joint_positions()
+            for i, idx in enumerate(self.joint_vel_addrs):
+                full_positions[idx] = positions[i]
+            self.articulation.set_joint_positions(full_positions)
+    
+
+    def set_joint_velocities(self, velocities):
+        """Set joint velocities"""
+        if hasattr(self, 'articulation'):
+            full_velocities = self.articulation.get_joint_velocities()
+            for i, idx in enumerate(self.joint_vel_addrs):
+                full_velocities[idx] = velocities[i]
+            self.articulation.set_joint_velocities(full_velocities)
+
+
+ 

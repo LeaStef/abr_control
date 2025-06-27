@@ -16,7 +16,7 @@ from flying_cube import FlyingCube
 
 
 # initialize our robot config for the jaco2
-robot_config = arm("ur5", use_sim_state=False)
+robot_config = arm("jaco2", use_sim_state=False)
 
 # create our path planner
 n_timesteps = 2000
@@ -25,64 +25,18 @@ path_planner = path_planners.InverseKinematics(robot_config)
 # create our interface
 dt = 0.001
 interface = IsaacSim(robot_config, dt=dt)
-interface.connect()
-interface.send_target_angles(robot_config.START_ANGLES)
+# interface.connect()
+# interface.send_target_angles(robot_config.START_ANGLES)
+
+
+n_dof_to_control = 6
+interface.connect(joint_names=[f"joint{ii}" for ii in range(n_dof_to_control)])
+interface.send_target_angles(robot_config.START_ANGLES[:n_dof_to_control])
+
+
 feedback = interface.get_feedback()
-isaac_target = FlyingCube(interface.dt, interface.world, name="target", prim_path="/World/target")
-ee_name = "end_effector"  # EE
-
-
-
-
-
-
-print("\nSimulation starting...")
-print("Click to move the target.\n")
-
-count = 0
-while 1:
-
-    if count % n_timesteps == 0:
-            feedback = interface.get_feedback()
-            target_xyz = np.array(
-                [
-                    np.random.random() * 0.5 - 0.25,
-                    np.random.random() * 0.5 - 0.25,
-                    np.random.random() * 0.5 + 0.5,
-                ]
-            )
-            R = robot_config.R(ee_name, q=feedback["q"])
-            target_orientation = transformations.euler_from_matrix(R, "sxyz")
-            # update the position of the target
-            #interface.set_mocap_xyz("target", target_xyz)
-            interface.set_xyz("target", target_xyz)
-
-            # can use 3 different methods to calculate inverse kinematics
-            # see inverse_kinematics.py file for details
-            print('target pos: ', target_xyz)
-            print('target_orientation: ', target_orientation)
-            path_planner.generate_path(
-                position=feedback["q"],
-                target_position=np.hstack([target_xyz, target_orientation]),
-                method=3,
-                dt=0.005,
-                n_timesteps=n_timesteps,
-                plot=False,
-            )
-
-        # returns desired [position, velocity]
-    target = path_planner.next()[0]
-
-    # use position control
-    interface.send_target_angles(target[: robot_config.N_JOINTS])
-    interface.viewer.render()
-
-    count += 1
-
-
-
-
-
+target_prim_path="/World/target"
+isaac_target = interface.create_target_prim(prim_path=target_prim_path)
 
 
 
@@ -100,36 +54,42 @@ try:
     while 1:
 
         if count % n_timesteps == 0:
-            feedback = interface.get_feedback()
-            target_xyz = np.array(
-                [
-                    np.random.random() * 0.5 - 0.25,
-                    np.random.random() * 0.5 - 0.25,
-                    np.random.random() * 0.5 + 0.5,
-                ]
-            )
-            R = robot_config.R(ee_name, q=feedback["q"])
-            target_orientation = transformations.euler_from_matrix(R, "sxyz")
-            # update the position of the target
-            interface.set_mocap_xyz("target", target_xyz)
+                feedback = interface.get_feedback()
+                target_xyz = np.array(
+                    [
+                        np.random.random() * 0.5 - 0.25,
+                        np.random.random() * 0.5 - 0.25,
+                        np.random.random() * 0.5 + 0.5,
+                    ]
+                )
+                R = robot_config.R(interface.ee_link_name, q=feedback["q"])
+                target_orientation = transformations.euler_from_matrix(R, "sxyz")
+                # update the position of the target
+                interface.set_xyz(target_prim_path, target_xyz)
 
-            # can use 3 different methods to calculate inverse kinematics
-            # see inverse_kinematics.py file for details
-            path_planner.generate_path(
-                position=feedback["q"],
-                target_position=np.hstack([target_xyz, target_orientation]),
-                method=3,
-                dt=0.005,
-                n_timesteps=n_timesteps,
-                plot=False,
-            )
+                # can use 3 different methods to calculate inverse kinematics
+                # see inverse_kinematics.py file for details
+                print("feedback[q]: ", feedback["q"])
+                print("target_xyz: ", target_xyz)
+                print("target_orientation: ", target_orientation)
+                path_planner.generate_path(
+                    position=feedback["q"],
+                    target_position=np.hstack([target_xyz, target_orientation]),
+                    method=3,
+                    dt=0.005,
+                    n_timesteps=n_timesteps,
+                    plot=False,
+                )
+                print("after generate")
 
-        # returns desired [position, velocity]
+            # returns desired [position, velocity]
         target = path_planner.next()[0]
 
         # use position control
         interface.send_target_angles(target[: robot_config.N_JOINTS])
-        interface.viewer.render()
+        interface.world.step(render=True) # execute one physics step and one rendering step
+
+        #interface.viewer.render()
 
         count += 1
 

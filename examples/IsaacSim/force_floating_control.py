@@ -35,12 +35,12 @@ q_track = []
 
 try:
     # get the end-effector's initial position
-    feedback = interface.get_feedback(all_joints=True)
-    start = robot_config.Tx(interface.ee_name, q=feedback["q"])
+    feedback = interface.get_feedback()
+    start = robot_config.Tx(interface.ee_link_name, q=feedback["q"])
     print("\nSimulation starting...\n")
     while 1:
         # get joint angle and velocity feedback
-        feedback = interface.get_feedback(all_joints=True)
+        feedback = interface.get_feedback()
 
         # calculate the control signal
         u = ctrlr.generate(q=feedback["q"], dq=feedback["dq"])
@@ -49,7 +49,7 @@ try:
         interface.send_forces(u)
 
         # calculate the position of the hand
-        hand_xyz = robot_config.Tx(interface.ee_name, q=feedback["q"])
+        hand_xyz = robot_config.Tx(interface.ee_link_name, q=feedback["q"])
         # track end effector position
         ee_track.append(np.copy(hand_xyz))
         q_track.append(np.copy(feedback["q"]))
