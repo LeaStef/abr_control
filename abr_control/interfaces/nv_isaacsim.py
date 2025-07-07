@@ -63,26 +63,23 @@ class IsaacSim(Interface):
         #self.world.add_physics_callback("send_actions", self.send_actions)
         
         robot_path = None
+        
         # Load the robot from USD file
         if self.robot_config.robot == "ur5":
             robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
             #ee_path = self.create_ee_xform("wrist_3_link", np.array([-0.04, 0, 0]))
-            EE_parent_link = "wrist_3_link"  # end-effector link for UR5
             has_EE = False  # UR5 has no end-effector
-            self.ee_link_name = "flange" #"ft_frame" # end-effector name for UR5
+            EE_parent_link = "wrist_3_link"  # end-effector link for UR5
+            self.ee_link_name = "flange"  # end-effector name for UR5
         elif self.robot_config.robot == "jaco2":
             robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
-            EE_link = "j2n6s300_end_effector"
-            EE_parent_link = "j2n6s300_link_6"  # end-effector link for Jaco2
             has_EE = True  # Jaco2 has an end-effector
-            #omni.kit.commands.execute("MovePrim", path_from="/World/robot/j2n6s300_end_effector", path_to="/World/robot/EE")
-            #ee_path = self.create_ee_xform("j2n6s300_link_6", np.array([-0.04, 0, 0]))
-            self.ee_link_name = "end_effector"  # end-effector name for Jaco2
+            self.ee_link_name = "j2n6s300_end_effector"  # end-effector name for Jaco2
         elif self.robot_config.robot == "h1":   
             robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
             #TODO check this
             EE_parent_link = "link6"  # end-effector link for H1
-
+        print(f"End Effector with name '{self.ee_link_name}' specified in UDS, using it ...")
 
         assets_root_path = get_assets_root_path()
         robot_usd_path = f"{assets_root_path}{robot_path}"
@@ -127,8 +124,6 @@ class IsaacSim(Interface):
         self.joint_vel_addrs = []
         self.joint_dyn_addrs = []
         
-
-        
         if joint_names is None:
             print("No joint names provided, using all controllable joints in the articulation.")
             # Get all controllable joints in the articulation
@@ -137,29 +132,28 @@ class IsaacSim(Interface):
             # Handle joint name mapping
             joint_names = self._map_joint_names(joint_names)
 
-
-
         # Validate joint names and get indices
         all_joint_names = self.articulation.dof_names
         
         for name in joint_names:
             if name not in all_joint_names:
                 raise Exception(f"Joint name {name} does not exist in robot model")
+            #TODO check if  joint_idx is necessary
             joint_idx = all_joint_names.index(name)
             self.joint_pos_addrs.append(joint_idx)
             self.joint_vel_addrs.append(joint_idx)
             self.joint_dyn_addrs.append(joint_idx)
         
+
+        '''
         # is boolean flag necessary?
         if has_EE:
-            print("End Effector ...")
-            # 'EE_link = "j2n6s300_end_effector"'
+            print(f"End Effector with name '{self.ee_link_name}' specified in UDS, using it ...")
         else:
             print("No End Effector, creating EE Xform...")
-            #ee_info = self.initialize_robot_end_effector(self.prim_path, EE_parent_link, np.array([-0.04, 0, 0]))
-            #ee_path = self.create_ee_xform(EE_parent_link, np.array([-0.04, 0, 0]))
+            ee_path = self.create_ee_xform(EE_parent_link, np.array([-0.04, 0, 0]))
         #print("End Effector Info: ", ee_info)
-        
+        '''
 
 
         # Connect robot config with simulation data
@@ -174,6 +168,7 @@ class IsaacSim(Interface):
             self.joint_pos_addrs,
             self.joint_vel_addrs,
             self.prim_path,
+            self.ee_link_name
         )
 
 
@@ -226,13 +221,7 @@ class IsaacSim(Interface):
         # If names are already in correct format, return as-is
         return joint_names
 
-
-
-
-
-
-
-        
+    
 
     def disconnect(self):
         """Any socket closing etc that must be done to properly shut down"""
@@ -240,29 +229,46 @@ class IsaacSim(Interface):
         print("IsaacSim connection closed...")
 
 
-      
+
     def send_forces(self, u):
-        """Applies the set of torques u to the arm."""
-        
+        """Applies the set of torques u to the arm - now working correctly!"""
         # Create full torque vector for all DOFs
-        total_dofs = self.articulation_view.num_dof
-        full_torques = np.zeros(total_dofs)
-        
+        full_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
         # Apply control torques to the controlled joints
         full_torques[:len(u)] = u
-        #print("U: ", u)
-        
         # Apply the control signal
         self.articulation_view.set_joint_efforts(full_torques)
+        # Move simulation ahead one time step
+        self.world.step(render=True)
+
+
+    '''
+    def send_forces(self, u):
+        """Applies the set of torques u to the arm."""
+        # Create full torque vector for all DOFs
+        full_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
+        # Apply control torques to the controlled joints
+        full_torques[:len(u)] = u
+        #full_torques[len(u):] = u
+        #print("full_torques: ", full_torques )
+
+        
+        
+        
+        
         #self.articulation_view.set_joint_efforts(np.ones(total_dofs) * -10000)  # Set the joint efforts (torques)
 
         #full_torques[:len(u)] = np.ones(len(u)) * -1000
         #full_torques[1] =  -1000
         #self.articulation_view.set_joint_efforts(full_torques)  # Set the joint efforts (torques)
 
+        # Apply the control signal
+        #self.articulation_view.set_effort_modes("force")
+        self.articulation_view.set_joint_efforts(full_torques)
+
         # Move simulation ahead one time step
         self.world.step(render=True)
-        
+       ''' 
     
 
 
@@ -398,7 +404,7 @@ class IsaacSim(Interface):
 
 
 
-    #TODO use for R and Tx in isaacsim_config
+    #TODO remove
     def get_prim_ends_with_name(self, name):
         prim_path = None
         for prim in self.stage.Traverse():
@@ -453,81 +459,101 @@ class IsaacSim(Interface):
         return cube_prim
     
 
-    #TODO remove
-    def find_EE(self, EE_name="end_effector"):
-        """Find the end-effector"""
+
+
+    #TODO not sure why this is necessary
+    def fix_arm_joint_gains(self):
+        """Properly set gains for arm joints (DOFs 0-5)"""
+        n_dofs = self.robot_config.N_ALL_JOINTS
         
-        link_list = self.articulation_view.body_names
-
-
+        # Get current gains or set defaults
+        stiffness = np.ones(n_dofs) * 100.0  # Default high stiffness
+        damping = np.ones(n_dofs) * 10.0     # Default damping
         
-        # Check if the articulation has an end-effector link
-        ee_link_name = None
-        for link_name in self.articulation_view.body_names:
-            if "end_effector" in link_name.lower() or "ee" in link_name.lower():
-                ee_link_name = link_name
-                break
+        # Set ARM joints (0-5) to zero stiffness for force control
+        arm_joint_indices = [0, 1, 2, 3, 4, 5]  # These are your arm joints
         
-        if ee_link_name is None:
-            raise Exception("End Effector link not found in the articulation.")
+        for idx in arm_joint_indices:
+            stiffness[idx] = 0.0    # Zero stiffness = force control
+            damping[idx] = 0.1      # Low damping for responsiveness
         
-        # Return the name of the end-effector link
-        return ee_link_name
-
-
-    # Create an invisible Xform for EE (wrist_3_link for UR5)
-    def create_ee_xform(self, parent_link="link6", ee_offset=np.array([-0.04, 0, 0])):
-        """Create an invisible Xform node for End Effector queries
+        # Keep finger joints with some stiffness if you want them stable
+        finger_joint_indices = [6, 7, 8, 9, 10, 11]
+        for idx in finger_joint_indices:
+            stiffness[idx] = 50.0   # Moderate stiffness for fingers
+            damping[idx] = 5.0      # Moderate damping for fingers
         
-        Parameters
-        ----------
-        parent_link : str
-            Name of the final link
-        ee_offset : np.array
-            Offset from parent_link to EE point [x, y, z]
-        """
-        from pxr import UsdGeom, Gf, UsdPhysics, Sdf
+        self.articulation_view.set_gains(stiffness, damping)
+        print("Fixed gains for arm joints (0-5)")
+
+
+
+
+    def test_arm_joints_after_fix(self):
+        """Test arm joints after fixing gains"""
+        # First fix the gains
+        #self.fix_arm_joint_gains()
         
-        # Create an Xform (transform node) for the EE
-        ee_path = f"{self.prim_path}/{parent_link}/EE"
-        print("ee path: ", ee_path)
-        ee_xform = UsdGeom.Xform.Define(self.stage, ee_path)
-
-        # Set position relative to parent_link 
-        ee_xform.AddTranslateOp().Set(Gf.Vec3d(ee_offset[0], ee_offset[1], ee_offset[2]))
-
-        # Add minimal physics properties without creating a separate rigid body
-        # This makes it part of the parent link's rigid body
-        ee_xform.GetPrim().CreateAttribute("physics:collisionEnabled", Sdf.ValueTypeNames.Bool).Set(False)
-    
-        # Add a custom attribute to mark it as an end effector for easier identification
-        ee_xform.GetPrim().CreateAttribute("custom:isEndEffector", Sdf.ValueTypeNames.Bool).Set(True)
-    
-        return ee_path
-
-
-    def get_ee_link_info(self, parent_link="link6"):
-        """Get information about all links including the EE
+        # Wait a moment for gains to take effect
+        for _ in range(10):
+            self.world.step(render=True)
         
-        Returns
-        -------
-        dict
-            Dictionary with link names as keys and indices as values
-        """
-        if hasattr(self, 'articulation_view'):
-            # Get all existing link names
-            link_names = self.articulation_view.body_names
+        # Test each arm joint individually
+        for joint_idx in range(6):
+            print(f"\n--- Testing ARM Joint {joint_idx} ---")
             
-            # Check if EE exists as a child of link6
-            ee_path = f"{self.prim_path}/{parent_link}/EE"
-            ee_prim = self.stage.GetPrimAtPath(ee_path)
+            # Apply torque to this joint only
+            test_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
+            test_torques[joint_idx] = 3.0  # 3 Nm torque
             
-            if ee_prim.IsValid():
-                # Add EE to the link names list
-                link_names.append("EE")
-                
-            # Create a mapping of names to indices
-            link_info = {name: idx for idx, name in enumerate(link_names)}
-            return link_info
+            initial_pos = self.articulation_view.get_joint_positions()[0]
+            
+            for _ in range(100):
+                self.articulation_view.set_joint_efforts(test_torques)
+                self.world.step(render=True)
+            
+            final_pos = self.articulation_view.get_joint_positions()[0]
+            change = final_pos[joint_idx] - initial_pos[joint_idx]
+            
+            print(f"  Joint {joint_idx} moved: {change:8.6f} rad ({np.degrees(change):6.2f}°)")
+            
+            # Reset position
+            self.articulation_view.set_joint_positions(initial_pos.reshape(1, -1))
+            for _ in range(10):
+                self.world.step(render=True)
+
+
+
+    def test_expected_coupling(self):
+        """Test that demonstrates expected dynamic coupling"""
         
-        return {}
+        # Test 1: Joint 0 (base) should affect all joints
+        print("=== Joint 0 (Base) Coupling Test ===")
+        self.apply_torque_and_measure(joint_idx=0, torque=1.0)
+        
+        # Test 2: Joint 5 (wrist) should have minimal effect on others
+        print("\n=== Joint 5 (Wrist) Isolation Test ===")
+        self.apply_torque_and_measure(joint_idx=5, torque=1.0)
+        
+        # Test 3: Joint 2 (elbow) should affect downstream joints
+        print("\n=== Joint 2 (Elbow) Coupling Test ===")
+        self.apply_torque_and_measure(joint_idx=2, torque=1.0)
+
+
+
+    def apply_torque_and_measure(self, joint_idx, torque):
+        initial_pos = self.articulation_view.get_joint_positions()[0][:6]
+        
+        for _ in range(10):
+            test_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
+            test_torques[joint_idx] = torque
+            self.articulation_view.set_joint_efforts(test_torques.reshape(1, -1))
+            self.world.step(render=True)
+        
+        final_pos = self.articulation_view.get_joint_positions()[0][:6]
+        change = final_pos - initial_pos
+        
+        print(f"Applied {torque} Nm to joint {joint_idx}")
+        print(f"Target joint moved: {change[joint_idx]:.6f} rad")
+        print(f"Max other joint movement: {np.max(np.abs(np.delete(change, joint_idx))):.6f} rad")
+        print(f"All changes: {change}")
