@@ -242,6 +242,8 @@ class IsaacsimConfig:
         # general case, check differences.cpp'
         raise NotImplementedError
 
+
+
     def J(self, name, q=None, x=None, object_type="body"):
         """Returns the Jacobian for the specified link,
         computed at the origin of the link's rigid body frame,
@@ -331,10 +333,9 @@ class IsaacsimConfig:
 
 
     
-    def M(self, q=None, indices=None):
+    def M(self, q=None):
         """
-        Returns the inertia matrix using Isaac Sim Core API
-        
+        Returns the inertia matrix for the controlled arm_joints.
         Args:
             q (np.ndarray, optional): Joint positions
             indices (optional): Specific articulation indices
@@ -342,107 +343,14 @@ class IsaacsimConfig:
         Returns:
             np.ndarray: Inertia matrix
         """
-        M = self._compute_mass_matrix_numerical()
-    
-        # Restore original state if q was provided
-        #if q is not None:
-        #    self.articulation.set_joint_positions(current_positions)
-        #    self.world.step(render=False)
-        
-        return np.copy(M)
+        # get_mass_matrices returns (num_envs, dof_count, dof_count)
+        M = self.articulation_view.get_mass_matrices()
+        # If you have only one robot in ArticulationView
+        M_full = M[0]
+        # extract only the controlled DOF
+        M_arm = M_full[:self.N_JOINTS, :self.N_JOINTS]
+        return np.copy(M_arm)
 
-
-    #TODO: CHECK AND IF NECEAARY remove this, use M instead
-    def _compute_mass_matrix_numerical(self):
-        """
-        Compute mass matrix numerically using finite differences
-        This is a fallback method when direct mass matrix access is not available
-        """
-        import numpy as np
-        
-        M = np.zeros((self.N_JOINTS, self.N_JOINTS))
-        
-        # Small perturbation for finite differences
-        epsilon = 1e-6
-        
-        # Get current state
-        current_pos = self.get_joint_positions()
-        current_vel = self.get_joint_velocities()
-
-        # Zero velocities for clean computation
-        zero_vel = np.zeros_like(current_vel)
-        self.set_joint_velocities(zero_vel)
-        
-        # Compute each column of mass matrix
-        for i in range(self.N_JOINTS):
-            # Create unit acceleration in joint i
-            unit_accel = np.zeros(self.N_JOINTS)
-            unit_accel[i] = 1.0
-            
-            # Compute required torques for this acceleration
-            # Using inverse dynamics: tau = M*qdd + C + G
-            tau = self._compute_inverse_dynamics(current_pos, zero_vel, unit_accel)
-            
-            # The torques give us the i-th column of the mass matrix
-            M[:, i] = tau
-        
-        return M
-      
-
-
-    def _compute_inverse_dynamics(self, q, qd, qdd):
-        """
-        Compute inverse dynamics: tau = M*qdd + C + G
-        This is an approximation using IsaacSim's physics engine
-        """
-        '''
-        # Method 1: Use PhysX articulation dynamics (if available)
-        try:
-            # Set desired accelerations and compute required forces
-            full_accelerations = np.zeros(self.robot.num_dof)
-            for i, idx in enumerate(self.joint_vel_addr):
-                full_accelerations[idx] = qdd[i]
-            
-            # Use articulation's compute_efforts method if available
-            if hasattr(self.robot, 'compute_efforts'):
-                efforts = self.robot.compute_efforts(
-                    positions=self.robot.get_joint_positions(),
-                    velocities=self.robot.get_joint_velocities(),
-                    accelerations=full_accelerations
-                )
-                return efforts[self.joint_vel_addr]
-        except:
-            pass
-        '''
-        # Method 2: Numerical approximation
-        # Apply accelerations and measure required torques
-        dt = self.world.get_physics_dt()
-        
-        # Store current state
-        original_pos = self.get_joint_positions()
-        original_vel = self.get_joint_velocities()
-        
-        # Set desired state
-        self.set_joint_positions(q)
-        self.set_joint_velocities(qd)
-        
-        # Compute target velocities after acceleration
-        target_vel = qd + qdd * dt
-        
-        # Use PD control to estimate required torques
-        kp = 1000.0  # High proportional gain
-        kd = 100.0   # Damping
-        
-        pos_error = np.zeros_like(q)  # No position error
-        vel_error = target_vel - qd
-        
-        tau = kp * pos_error + kd * vel_error
-        
-        # Restore original state
-        self.set_joint_positions(original_pos)
-        self.set_joint_velocities(original_vel)
-        
-        return tau
 
 
 
