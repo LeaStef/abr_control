@@ -20,19 +20,22 @@ else:
     arm_model = "jaco2"
 robot_config = arm(arm_model)
 
-# create our IsaacSim interface
 dt = 0.007  # 143 Hz 
 #dt = 0.001 # 1000 Hz
-
 target_prim_path="/World/target"
+
+# create our IsaacSim interface
 interface = IsaacSim(robot_config, dt=dt)
+
 interface.connect(joint_names=[f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))])
+#dof_names = interface.articulation.dof_names
+#print("dof_names: " + dof_names)
 
 interface.send_target_angles(robot_config.START_ANGLES)
 isaac_target = interface.create_target_prim(prim_path=target_prim_path)
-interface.fix_arm_joint_gains()
 
-print("joint_pos_addrs: ", interface.robot_config.joint_pos_addrs)
+
+interface.set_gains_force_control()
 
 
 # damp the movements of the arm
@@ -65,18 +68,17 @@ def gen_target(interface):
 try:
     # get the end-effector's initial position
     feedback = interface.get_feedback()
-    start = robot_config.Tx(interface.ee_link_name, feedback["q"])
+    start = robot_config.Tx(robot_config.ee_link_name, feedback["q"])
     
     # make the target offset from that start position
     gen_target(interface)
 
     count = 0
-    debug = 0
     print("\nSimulation starting...\n")
     while 1:
         current_time = time.time()
         dt = current_time - last_time
-        print(f"Control dt: {dt:.6f}s, Freq: {1/dt:.1f}Hz")
+        #print(f"Control dt: {dt:.6f}s, Freq: {1/dt:.1f}Hz")
         last_time = current_time
         # get joint angle and velocity feedback
         feedback = interface.get_feedback()
@@ -96,12 +98,11 @@ try:
             dq=feedback["dq"],
             target=target,
         )
-        
 
         interface.send_forces(u)
 
         # calculate end-effector position
-        ee_xyz = robot_config.Tx(interface.ee_link_name, q=feedback["q"])
+        ee_xyz = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
         # track data
         ee_track.append(np.copy(ee_xyz))
         target_track.append(np.copy(target[:3]))
@@ -124,7 +125,7 @@ except:
 
 finally:
     # stop and reset the IsaacSim simulation
-    interface.disconnect()
+    #interface.disconnect()
 
     print("Simulation terminated...")
 

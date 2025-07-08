@@ -1,8 +1,11 @@
-import os
 from xml.etree import ElementTree
 import numpy as np
 from abr_control.utils import download_meshes
 import omni
+
+
+
+
 
 
 class IsaacsimConfig:
@@ -37,7 +40,7 @@ class IsaacsimConfig:
 
 
 
-    def __init__(self, xml_file, folder=None, use_sim_state=True, force_download=False):
+    def __init__(self, robot_type, folder=None, use_sim_state=True, force_download=False):
         """Loads the Isaacsim model from the specified xml file
 
         Parameters
@@ -71,63 +74,35 @@ class IsaacsimConfig:
             False: if the meshes folder is missing it will ask the user whether they
             want to download them
         """
-        if folder is None:
-            arm_dir = xml_file.split("_")[0]
-            current_dir = os.path.dirname(__file__)
-            self.xml_file = os.path.join(current_dir, arm_dir, f"{xml_file}.xml")
-            self.xml_dir = f"{current_dir}/{arm_dir}"
-        else:
-            self.xml_dir = f"{folder}"
-            self.xml_file = os.path.join(self.xml_dir, xml_file)
-
-        self.N_GRIPPER_JOINTS = 0
-
-        # get access to some of our custom arm parameters from the xml definition
-        tree = ElementTree.parse(self.xml_file)
-        root = tree.getroot()
-        for custom in root.findall("custom/numeric"):
-            name = custom.get("name")
-            if name == "START_ANGLES":
-                START_ANGLES = custom.get("data").split(" ")
-                self.START_ANGLES = np.array([float(angle) for angle in START_ANGLES])
-            elif name == "N_GRIPPER_JOINTS":
-                self.N_GRIPPER_JOINTS = int(custom.get("data"))
-
-        # check for google_id specifying download location of robot mesh files
-        self.google_id = None
-        for custom in root.findall("custom/text"):
-            name = custom.get("name")
-            if name == "google_id":
-                self.google_id = custom.get("data")
-
-        actuators = root.find(f'actuator')
-        self.joint_names = [actuator.get("joint") for actuator in actuators]
-     
-        # check if the user has downloaded the required mesh files
-        # if not prompt them to do so
-        if self.google_id is not None:
-            # get list of expected files to check if all have been downloaded
-            files = []
-            for asset in root.findall("asset/mesh"):
-                files.append(asset.get("file"))
-
-            for asset in root.findall("asset/texture"):
-                # assuming that texture are placed in the meshes folder
-                files.append(asset.get("file").split("/")[1])
-
-            # check if our mesh folder exists, then check we have all the files
-            download_meshes.check_and_download(
-                name=self.xml_dir + "/meshes",
-                google_id=self.google_id,
-                force_download=force_download,
-                files=files,
-            )
-
-        #TODO fix above to get away from xml
-        self.robot = xml_file
+        self.robot_type = robot_type
+        #TODO obsolete, from mujoco
         self.use_sim_state = use_sim_state
+         
+        self.robot_path = None
+        
+        # Load the robot from USD file
+        if self.robot_type == "ur5":
+            self.robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
+            has_EE = False  # UR5 has no end-effector
+            EE_parent_link = "wrist_3_link"  # end-effector link for UR5
+            self.ee_link_name = "flange"  # end-effector name for UR5
+            START_ANGLES = "0 -.67 -.67 0 0 0"
 
-    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path, ee_link_name):
+        elif self.robot_type == "jaco2":
+            self.robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
+            self.ee_link_name = "j2n6s300_end_effector"  # end-effector name for Jaco2
+            START_ANGLES = "2.0 3.14 1.57 4.71 0.0 3.04"
+                
+        elif self.robot_type == "h1":   
+            self.robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
+            self.ee_link_name = "EE"  
+            START_ANGLES = "0 0 0 0"
+
+        self.START_ANGLES = np.array(START_ANGLES.split(), dtype=float)
+
+        
+
+    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_vel_addrs, prim_path):
 
         """Called by the interface once the Mujoco simulation is created,
         this connects the config to the simulator so it can access the
@@ -153,14 +128,9 @@ class IsaacsimConfig:
         self.joint_pos_addrs = np.copy(joint_pos_addrs)
         self.joint_vel_addrs = np.copy(joint_vel_addrs)
         self.prim_path = prim_path
-        self.ee_link_name = ee_link_name
-
-        
         self.N_JOINTS = len(self.joint_vel_addrs)
-        print (f"Number of controllable joints: {self.N_JOINTS}")
         # number of joints in the IsaacSim simulation
         N_ALL_JOINTS = self.articulation_view.num_dof
-        print (f"Number of ALL joints in simulation: {N_ALL_JOINTS}")
 
         # need to calculate the joint_vel_addrs indices in flat vectors returned
         # for the Jacobian
@@ -216,7 +186,7 @@ class IsaacsimConfig:
             # If q is provided, ensure g matches the size of q
             if len(g_full) != len(q):
                 g_full = g_full[:len(q)]
-        
+
         return -g_full
         
     
@@ -267,8 +237,8 @@ class IsaacsimConfig:
             if jacobians.shape[0] == 0:
                 raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
             
-            # Get link index
-            link_index = self.articulation_view.get_link_index(name)
+            #link_index = self.articulation_view.get_link_index(name)
+            link_index = self.safe_get_link(name, default=6)
             
             # Extract Jacobian for specific link
             env_idx = 0  # Assuming single environment
@@ -279,6 +249,7 @@ class IsaacsimConfig:
             if len(jacobians.shape) == 4:
                 # Shape: (num_envs, num_bodies, 6, num_dofs)
                 # Get Jacobian for the end-effector link (link_index 7)
+                #print("link_index: ", link_index)
                 J_full = jacobians[env_idx, link_index, :, :]
             elif len(jacobians.shape) == 3:
                 # Shape: (num_envs, num_bodies * 6, num_dofs)
@@ -288,22 +259,10 @@ class IsaacsimConfig:
             else:
                 raise RuntimeError(f"Unexpected jacobians shape: {jacobians.shape}")
            
-            # For Jaco 2, we want only the first 6 DOFs (arm joints, not fingers)
-            # J_full is 6x12 (6 DOF end-effector w.r.t. 12 total DOFs)
-            # We only want columns 0-5 (the arm joints)
-            if len(self.joint_pos_addrs) != 6:
-                raise RuntimeError(f"Expected 6 joint addresses for robot arm, got {len(self.joint_pos_addrs)}")
-            
             # Extract only the columns for controllable DOFs 
             # This gives us the end-effector Jacobian w.r.t. only the arm joints
             J = J_full[:, self.joint_pos_addrs]
-                        
-            # Verify dimensions
-            if J.shape[0] != 6:
-                raise RuntimeError(f"Expected Jacobian to have 6 rows, got {J.shape[0]}")
-            if J.shape[1] != 6:
-                raise RuntimeError(f"Expected Jacobian to have 6 columns for arm DOFs, got {J.shape[1]}")
-            
+
             # Check for NaN or inf values
             if np.any(np.isnan(J)) or np.any(np.isinf(J)):
                 raise RuntimeError("Jacobian contains NaN or infinite values")
@@ -314,8 +273,7 @@ class IsaacsimConfig:
             # Angular velocity Jacobian (last 3 rows)  
             self._J6N[3:, :] = J[3:, :]
             
-            # Additional validation - check if Jacobian makes sense
-            # For a 6-DOF arm, we should have non-zero values
+            # Additional validation - check if Jacobian makes sense (non-zero values)
             if np.allclose(J, 0):
                 raise RuntimeError("Jacobian is all zeros - check robot configuration and joint addresses")
             
@@ -327,7 +285,6 @@ class IsaacsimConfig:
             raise ValueError(f"Invalid object type specified: {object_type}")
         
         return np.copy(self._J6N)
-
 
 
     def M(self, q=None):
@@ -408,9 +365,7 @@ class IsaacsimConfig:
         # Get 4x4 world transform matrix
         matrix = omni.usd.get_world_transform_matrix(prim)
 
-        from pxr import Gf
-        # Extract quaternion (as Gf.Quatf or Gf.Quatd)
-        quat = matrix.ExtractRotationQuat()  # returns Gf.Quatd or Gf.Quatf
+        quat = matrix.ExtractRotationQuat()  
 
         # Convert to [w, x, y, z] NumPy array 
         quat_np = np.array([quat.GetReal(), *quat.GetImaginary()])
@@ -444,6 +399,7 @@ class IsaacsimConfig:
         # TODO if ever required
         raise NotImplementedError
 
+
     def Tx(self, name, q=None, x=None, object_type="body"):
         """Simplified version that only gets current position without state changes."""
         if name == "EE": name = self.ee_link_name
@@ -465,8 +421,6 @@ class IsaacsimConfig:
         position = matrix.ExtractTranslation()
 
         return np.array([position[0], position[1], position[2]], dtype=np.float64)
-
-
 
 
     def T_inv(self, name, q=None, x=None):
@@ -508,31 +462,23 @@ class IsaacsimConfig:
             all_velocities = self.articulation.get_joint_velocities()
             return all_velocities[self.joint_vel_addrs]
         return None
-    '''
-    def set_joint_positions(self, positions):
-        """Set joint positions"""
-        if hasattr(self, 'articulation'):
-            full_positions = self.articulation.get_joint_positions()
-            for i, idx in enumerate(range(len(positions))):
-                full_positions[idx] = positions[i]
-            self.articulation.set_joint_positions(full_positions)
+ 
 
-    '''
-    def set_joint_positions(self, positions):
+    def set_joint_positions(self, q):
         """Set joint positions"""
         if hasattr(self, 'articulation'):
             full_positions = self.articulation.get_joint_positions()
-            for i, idx in enumerate(self.joint_vel_addrs):
-                full_positions[idx] = positions[i]
+            for i, idx in enumerate(range(len(q))):
+                full_positions[idx] = q[i]
             self.articulation.set_joint_positions(full_positions)
     
 
-    def set_joint_velocities(self, velocities):
+    def set_joint_velocities(self, dq):
         """Set joint velocities"""
         if hasattr(self, 'articulation'):
             full_velocities = self.articulation.get_joint_velocities()
-            for i, idx in enumerate(self.joint_vel_addrs):
-                full_velocities[idx] = velocities[i]
+            for i, idx in enumerate(range(len(dq))):
+                full_velocities[idx] = dq[i]
             self.articulation.set_joint_velocities(full_velocities)
 
     #TODO remove of fix method used for UR5
@@ -540,7 +486,6 @@ class IsaacsimConfig:
         """Get the index of a link by its name"""
 
         import omni.isaac.core.utils.prims as prims_utils
-        #import omni.isaac.core.prims as prims_utils
 
         prim_path = self._get_prim_path(name)
         prim = prims_utils.get_prim_at_path(prim_path)
@@ -550,3 +495,11 @@ class IsaacsimConfig:
         print(f"Link name: {name}, Prim path: {prim_path}, Parent name: {parent_name}, Link index: {link_index}")
         
         return link_index + 1
+    
+
+    def safe_get_link(self, name, default=None):
+        try:
+            return self.articulation_view.get_link_index(name)
+        except KeyError:
+            print(f"Link '{name}' not found, using default: {default}")
+            return default

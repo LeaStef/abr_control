@@ -1,6 +1,19 @@
 import numpy as np
 from isaacsim import SimulationApp
 from .interface import Interface
+simulation_app = SimulationApp({"headless": False}) 
+import omni
+import omni.kit.commands # type: ignore
+import omni.isaac.core.utils.stage as stage_utils # type: ignore   
+from omni.isaac.core import World # type: ignore
+from omni.isaac.core.articulations import Articulation, ArticulationView # type: ignore
+#TODO change import 
+#TODO is "Robot" even necessary 
+from isaacsim.core.api.robots import Robot # type: ignore
+from pxr import UsdGeom, Gf, UsdShade, Sdf # type: ignore  
+import omni.isaac.core.utils.stage as stage_utils # type: ignore   
+from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
+
 
 
 class IsaacSim(Interface):
@@ -22,7 +35,7 @@ class IsaacSim(Interface):
         self.dt = dt  # time step
         self.count = 0  # keep track of how many times send forces is called
         self.prim_path = "/World/robot"
-        self.name = self.robot_config.xml_dir.rsplit('/', 1)[-1]
+        self.name = self.robot_config.robot_type 
         
 
     def connect(self, joint_names=None, camera_id=-1):
@@ -34,17 +47,6 @@ class IsaacSim(Interface):
         """
 
         """All initial setup."""
-        self.simulation_app = SimulationApp({"headless": False}) 
-        import omni
-        import omni.kit.commands # type: ignore
-        import omni.isaac.core.utils.stage as stage_utils # type: ignore   
-        from omni.isaac.core import World # type: ignore
-        from omni.isaac.core.articulations import Articulation, ArticulationView # type: ignore
-        from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
-        #TODO change import 
-        #TODO is "Robot" even necessary 
-        from isaacsim.core.api.robots import Robot # type: ignore
-        
         # Initialize the simulation world
         self.world = World(stage_units_in_meters=1.0)
         self.world.scene.add_default_ground_plane()
@@ -52,37 +54,22 @@ class IsaacSim(Interface):
         self.stage = self.context.get_stage()
          #TODO necessary for H1 robot
         #self.world.add_physics_callback("send_actions", self.send_actions)
-        
-        robot_path = None
-        
-        # Load the robot from USD file
-        if self.robot_config.robot == "ur5":
-            robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
-            #ee_path = self.create_ee_xform("wrist_3_link", np.array([-0.04, 0, 0]))
-            has_EE = False  # UR5 has no end-effector
-            EE_parent_link = "wrist_3_link"  # end-effector link for UR5
-            self.ee_link_name = "flange"  # end-effector name for UR5
-        elif self.robot_config.robot == "jaco2":
-            robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
-            has_EE = True  # Jaco2 has an end-effector
-            self.ee_link_name = "j2n6s300_end_effector"  # end-effector name for Jaco2
-        elif self.robot_config.robot == "h1":   
-            robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
-            #TODO check this
-            EE_parent_link = "link6"  # end-effector link for H1
-        print(f"Robot '{self.name}' is loaded from UDS ...")
-        print(f"End Effector with name '{self.ee_link_name}' specified in UDS, using it ...")
+       
 
+        
         assets_root_path = get_assets_root_path()
-        robot_usd_path = f"{assets_root_path}{robot_path}"
-        print(f"Loading robot from USD path: {robot_usd_path}")
-        
-        
+        robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
+        print(f"Robot '{self.robot_config.robot_type}' is loaded from USD path: {robot_usd_path}")
+        print(f"End Effector with name '{self.robot_config.ee_link_name}' specified in UDS, using it ...")
+       
+
+
         stage_utils.add_reference_to_stage(
-                 usd_path=assets_root_path + robot_path,
-                 prim_path=self.prim_path,
-                 )
+                usd_path=robot_usd_path,
+                prim_path=self.prim_path,
+                )
         robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
+
         
         self.world.reset()
         self.articulation = Articulation(prim_path=self.prim_path, name=self.name + "_articulation")
@@ -137,11 +124,8 @@ class IsaacSim(Interface):
         #print("End Effector Info: ", ee_info)
         '''
 
-
         # Connect robot config with simulation data
         print("Connecting to robot config...")
-        print("Joint Position Addresses: ", self.joint_pos_addrs)
-        print("Joint Velocity Addresses: ", self.joint_vel_addrs)
         self.robot_config._connect(
             self.world,
             self.stage,
@@ -150,9 +134,7 @@ class IsaacSim(Interface):
             self.joint_pos_addrs,
             self.joint_vel_addrs,
             self.prim_path,
-            self.ee_link_name
         )
-
 
 
     def _map_joint_names(self, joint_names):
@@ -243,7 +225,6 @@ class IsaacSim(Interface):
     
 
     def get_transform(self, prim_path):
-        from pxr import Usd, UsdGeom, Gf
         _cube =  self.stage.GetPrimAtPath(prim_path)
         # Check if it's an Xformable
         if not _cube.IsValid() or not UsdGeom.Xformable(_cube):
@@ -256,49 +237,15 @@ class IsaacSim(Interface):
         return transform_matrix
 
 
-
-    #TODO change method name in 'set_named_prim' or something as mocap is mujoco thing
-    def set_mocap_xyz(self, name, xyz):
-        """
-        Set the world position of a named prim (used like a mocap target).
-
-        Parameters
-        ----------
-        name : str
-            Name of the prim (e.g. site or target object)
-        xyz : np.ndarray
-            Target world position [x, y, z] in meters
-        """
-       
-        world_path = "/World"
-        prim_path = f"{world_path}/{name}" 
-        print("prim_path:", prim_path)
-        prim = self.stage.GetPrimAtPath(prim_path)
-
-        prim.set_world_pose(xyz, np.array([0., 0., 0., 1.])) # set the position and orientation of the object
-
-
-        print("prim_path:", prim_path)
-        #from omni.isaac.core.utils.prims import set_prim_world_position
-        #set_prim_world_position(prim_path, xyz)
-
-
-
-
-    #TODO remove as is the same as above
     def set_xyz(self, prim_path, xyz, orientation=np.array([0., 0., 0., 1.])):
         """Set the position of an object in the environment.
 
-        name : string
-            the name of the object
+        prim_path : string
+            the prim_path of the object
         xyz : np.array
             the [x,y,z] location of the target [meters]
-        """
-        from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics # type: ignore        
-
+        """     
         _cube =  self.stage.GetPrimAtPath(prim_path)
-        #_cube.set_world_pose(xyz, orientation) # set the position and orientation of the object
-
         xformable = UsdGeom.Xformable(_cube)
         transform_matrix = Gf.Matrix4d().SetTranslate(Gf.Vec3d(xyz[0], xyz[1], xyz[2]))
         xformable.MakeMatrixXform().Set(transform_matrix)
@@ -306,8 +253,7 @@ class IsaacSim(Interface):
 
     # method for keep_standing
     def send_actions(self, dt):
-        pelvis_prim_path = '/World/robot/pelvis'
-        from pxr import Gf  # type: ignore    
+        pelvis_prim_path = '/World/robot/pelvis'  
         prim=self.stage.GetPrimAtPath(pelvis_prim_path)
         prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0 ,0.0 ,0.0 ,0.0))
         prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0 ,0.0 ,0.02))
@@ -316,9 +262,7 @@ class IsaacSim(Interface):
 
 
     # Create a visual-only cube (no collision)
-    def create_target_prim(self, prim_path="/World/target_cube", position=np.array([0, 0, 1.0]), size = .1, color=np.array([0, 0, 1.0])):
-        from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics # type: ignore        
-        
+    def create_target_prim(self, prim_path="/World/target_cube", position=np.array([0, 0, 1.0]), size = .1, color=np.array([0, 0, 1.0])):        
         # Create cube geometry
         cube_prim = UsdGeom.Cube.Define(self.stage, prim_path)
         cube_prim.CreateSizeAttr(size)  # Unit cube
@@ -352,26 +296,64 @@ class IsaacSim(Interface):
     
 
     #TODO not sure why this is necessary
-    def fix_arm_joint_gains(self):
-        """Properly set gains for arm joints (DOFs 0-5)"""
-        n_dofs = self.robot_config.N_ALL_JOINTS
+    def set_gains_force_control(self):
+        """Properly set gains for arm joints (DOFs 0-5) and finger joints if present"""
         
         # Get current gains or set defaults
-        stiffness = np.ones(n_dofs) * 100.0  # Default high stiffness
-        damping = np.ones(n_dofs) * 10.0     # Default damping
+        stiffness = np.ones(self.robot_config.N_ALL_JOINTS) * 100.0  # Default high stiffness
+        damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0     # Default damping
         
-        # Set ARM joints (0-5) to zero stiffness for force control
-        arm_joint_indices = [0, 1, 2, 3, 4, 5]  # These are your arm joints
-        
+        # Set controlled arm joints to zero stiffness for force control
+        arm_joint_indices = list(range(self.robot_config.N_JOINTS)) 
+
         for idx in arm_joint_indices:
             stiffness[idx] = 0.0    # Zero stiffness = force control
             damping[idx] = 0.1      # Low damping for responsiveness
         
         # Keep finger joints with some stiffness if you want them stable
-        finger_joint_indices = [6, 7, 8, 9, 10, 11]
-        for idx in finger_joint_indices:
-            stiffness[idx] = 50.0   # Moderate stiffness for fingers
-            damping[idx] = 5.0      # Moderate damping for fingers
+        if self.robot_config.N_ALL_JOINTS > self.robot_config.N_JOINTS:
+            dof_names = self.articulation_view.dof_names
+            finger_joint_indices = list(range(self.robot_config.N_JOINTS, self.robot_config.N_ALL_JOINTS))
+            for idx in finger_joint_indices:
+                if "finger" in dof_names[idx].lower():
+                    stiffness[idx] = 50.0   # Moderate stiffness for fingers
+                    damping[idx] = 5.0      # Moderate damping for fingers
+            
+        self.articulation_view.set_gains(stiffness, damping)
+        print(f"Set gains for force control for arm joints {arm_joint_indices }")
+
+
+
+    def set_gains_position_control_min(self):
+        """Set up position control with high stiffness"""
+        n_dofs = self.robot_config.N_JOINTS
+        stiffness = np.ones(n_dofs) * 1000.0  # High stiffness for position control
+        damping = np.ones(n_dofs) * 100.0     # High damping for stability
         
         self.articulation_view.set_gains(stiffness, damping)
-        print("Fixed gains for arm joints (0-5)")
+
+
+    def set_gains_position_control(self):
+        """Properly set gains for arm joints for position control and finger joints if present"""
+        # Get current gains or set defaults
+        stiffness = np.ones(self.robot_config.N_ALL_JOINTS) * 100.0  # Default high stiffness
+        damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0     # Default damping
+        
+        # Set controlled arm joints to HIGH stiffness for position control
+        arm_joint_indices = list(range(self.robot_config.N_JOINTS))
+        for idx in arm_joint_indices:
+            stiffness[idx] = 1000.0  # High stiffness = position control
+            damping[idx] = 100.0     # High damping for stability
+        
+        # Keep finger joints with some stiffness if you want them stable
+        if self.robot_config.N_ALL_JOINTS > self.robot_config.N_JOINTS:
+            dof_names = self.articulation_view.dof_names
+            finger_joint_indices = list(range(self.robot_config.N_JOINTS, self.robot_config.N_ALL_JOINTS))
+            for idx in finger_joint_indices:
+                if "finger" in dof_names[idx].lower():
+                    stiffness[idx] = 50.0  # Moderate stiffness for fingers
+                    damping[idx] = 5.0     # Moderate damping for fingers
+        
+        self.articulation_view.set_gains(stiffness, damping)
+        print(f"Set gains for position control for arm joints {arm_joint_indices }")
+
