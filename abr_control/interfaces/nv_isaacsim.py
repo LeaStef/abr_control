@@ -21,14 +21,9 @@ class IsaacSim(Interface):
         self.robot_config = robot_config
         self.dt = dt  # time step
         self.count = 0  # keep track of how many times send forces is called
-
         self.prim_path = "/World/robot"
         self.name = self.robot_config.xml_dir.rsplit('/', 1)[-1]
-
-        #self.misc_handles = {}  # for tracking miscellaneous object handles
         
-
-
 
     def connect(self, joint_names=None, camera_id=-1):
         """
@@ -38,21 +33,17 @@ class IsaacSim(Interface):
             to the world are used
         """
 
-      
         """All initial setup."""
         self.simulation_app = SimulationApp({"headless": False}) 
         import omni
-        import omni.kit.commands  # type: ignore
-        import omni.isaac.core.utils.stage as stage_utils  # type: ignore   
-        from omni.isaac.core import World
-        #from omni.isaac.core.utils.stage import get_current_stage
-        from omni.isaac.core.utils.prims import get_prim_at_path
+        import omni.kit.commands # type: ignore
+        import omni.isaac.core.utils.stage as stage_utils # type: ignore   
+        from omni.isaac.core import World # type: ignore
         from omni.isaac.core.articulations import Articulation, ArticulationView # type: ignore
-        from omni.isaac.core.utils.nucleus import get_assets_root_path
+        from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
         #TODO change import 
         #TODO is "Robot" even necessary 
-        from isaacsim.core.api.robots import Robot
-        from pxr import UsdPhysics, UsdGeom
+        from isaacsim.core.api.robots import Robot # type: ignore
         
         # Initialize the simulation world
         self.world = World(stage_units_in_meters=1.0)
@@ -79,29 +70,20 @@ class IsaacSim(Interface):
             robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
             #TODO check this
             EE_parent_link = "link6"  # end-effector link for H1
+        print(f"Robot '{self.name}' is loaded from UDS ...")
         print(f"End Effector with name '{self.ee_link_name}' specified in UDS, using it ...")
 
         assets_root_path = get_assets_root_path()
         robot_usd_path = f"{assets_root_path}{robot_path}"
         print(f"Loading robot from USD path: {robot_usd_path}")
         
-
         
         stage_utils.add_reference_to_stage(
                  usd_path=assets_root_path + robot_path,
                  prim_path=self.prim_path,
                  )
         robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
-        '''
-        self.robot = self.world.scene.add(
-            Articulation(
-                prim_path="/World/Robot",
-                name="robot",
-                usd_path=robot_usd_path,
-                position=[0, 0, 0]
-            )
-        )
-        '''
+        
         self.world.reset()
         self.articulation = Articulation(prim_path=self.prim_path, name=self.name + "_articulation")
         self.articulation.initialize()
@@ -173,32 +155,6 @@ class IsaacSim(Interface):
 
 
 
-
-
-    '''
-    def _get_kinematic_chain_joints(self, ee_link_name):
-        """
-        Get joints in kinematic chain from end-effector to base
-        """
-        
-        # For most robot arms, we can use all revolute joints
-        # This would need to be customized based on your specific robot
-        all_joints = self.articulation.dof_names
-        # Filter for revolute joints (exclude fixed joints)
-        kinematic_joints = []
-        for joint_name in all_joints:
-            #joint_prim_path = f"/World/Robot/{joint_name}"
-            joint_prim_path = f"{self.prim_path}{joint_name}"
-
-            joint_prim = get_prim_at_path(joint_prim_path)
-            if joint_prim and joint_prim.HasAPI(UsdPhysics.RevoluteJointAPI):
-                kinematic_joints.append(joint_name)
-        
-        return kinematic_joints
-        '''
-
-
-
     def _map_joint_names(self, joint_names):
         """
         Map joint names from MuJoCo format to IsaacSim format
@@ -221,13 +177,11 @@ class IsaacSim(Interface):
         # If names are already in correct format, return as-is
         return joint_names
 
-    
 
     def disconnect(self):
         """Any socket closing etc that must be done to properly shut down"""
         self.simulation_app.close() # close Isaac Sim
         print("IsaacSim connection closed...")
-
 
 
     def send_forces(self, u):
@@ -242,58 +196,16 @@ class IsaacSim(Interface):
         self.world.step(render=True)
 
 
-    '''
-    def send_forces(self, u):
-        """Applies the set of torques u to the arm."""
-        # Create full torque vector for all DOFs
-        full_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
-        # Apply control torques to the controlled joints
-        full_torques[:len(u)] = u
-        #full_torques[len(u):] = u
-        #print("full_torques: ", full_torques )
-
-        
-        
-        
-        
-        #self.articulation_view.set_joint_efforts(np.ones(total_dofs) * -10000)  # Set the joint efforts (torques)
-
-        #full_torques[:len(u)] = np.ones(len(u)) * -1000
-        #full_torques[1] =  -1000
-        #self.articulation_view.set_joint_efforts(full_torques)  # Set the joint efforts (torques)
-
-        # Apply the control signal
-        #self.articulation_view.set_effort_modes("force")
-        self.articulation_view.set_joint_efforts(full_torques)
-
-        # Move simulation ahead one time step
-        self.world.step(render=True)
-       ''' 
-    
-
-
     def send_target_angles(self, q):
         """Moves the arm to the specified joint angles
 
         q : numpy.array
                 the target joint angles [radians]
-        
-        # Check if the length of q is greater than the number of joints
-        if len(q) > self.robot_config.N_JOINTS:
-            q_new = q[:self.robot_config.N_JOINTS]  
-            self.articulation_view.set_joint_positions(q_new)
-        elif len(q) < self.robot_config.N_ALL_JOINTS :
-            q_new = self.articulation_view.get_joint_positions()  # Shape: (1, 12)
-            q_new[0, :len(q)] = q  # Update first N_JOINTS for environment 0
-            self.articulation_view.set_joint_positions(q_new)
-        else: 
-            self.articulation_view.set_joint_positions(q)
         """
         self.robot_config.set_joint_positions(q)
         self.world.step(render=True)
 
 
-    
     def get_feedback(self):
         """Return a dictionary of information needed by the controller.
 
@@ -303,7 +215,6 @@ class IsaacSim(Interface):
         self.q = self.robot_config.get_joint_positions()
         self.dq = self.robot_config.get_joint_velocities()
         return {"q": self.q, "dq": self.dq}
-
 
 
     def get_xyz(self, prim_path):
@@ -404,25 +315,6 @@ class IsaacSim(Interface):
 
 
 
-    #TODO remove
-    def get_prim_ends_with_name(self, name):
-        prim_path = None
-        for prim in self.stage.Traverse():
-            print("prim: ", prim)
-            print("prim.GetPath(): ", prim.GetPath())
-            print("name: ", name)
-            if str(prim.GetPath()).endswith(name):
-                prim_path = prim.GetPath()
-                break
-        return prim_path
-    
-
-
-
-
-
-
-
     # Create a visual-only cube (no collision)
     def create_target_prim(self, prim_path="/World/target_cube", position=np.array([0, 0, 1.0]), size = .1, color=np.array([0, 0, 1.0])):
         from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics # type: ignore        
@@ -459,8 +351,6 @@ class IsaacSim(Interface):
         return cube_prim
     
 
-
-
     #TODO not sure why this is necessary
     def fix_arm_joint_gains(self):
         """Properly set gains for arm joints (DOFs 0-5)"""
@@ -485,75 +375,3 @@ class IsaacSim(Interface):
         
         self.articulation_view.set_gains(stiffness, damping)
         print("Fixed gains for arm joints (0-5)")
-
-
-
-
-    def test_arm_joints_after_fix(self):
-        """Test arm joints after fixing gains"""
-        # First fix the gains
-        #self.fix_arm_joint_gains()
-        
-        # Wait a moment for gains to take effect
-        for _ in range(10):
-            self.world.step(render=True)
-        
-        # Test each arm joint individually
-        for joint_idx in range(6):
-            print(f"\n--- Testing ARM Joint {joint_idx} ---")
-            
-            # Apply torque to this joint only
-            test_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
-            test_torques[joint_idx] = 3.0  # 3 Nm torque
-            
-            initial_pos = self.articulation_view.get_joint_positions()[0]
-            
-            for _ in range(100):
-                self.articulation_view.set_joint_efforts(test_torques)
-                self.world.step(render=True)
-            
-            final_pos = self.articulation_view.get_joint_positions()[0]
-            change = final_pos[joint_idx] - initial_pos[joint_idx]
-            
-            print(f"  Joint {joint_idx} moved: {change:8.6f} rad ({np.degrees(change):6.2f}°)")
-            
-            # Reset position
-            self.articulation_view.set_joint_positions(initial_pos.reshape(1, -1))
-            for _ in range(10):
-                self.world.step(render=True)
-
-
-
-    def test_expected_coupling(self):
-        """Test that demonstrates expected dynamic coupling"""
-        
-        # Test 1: Joint 0 (base) should affect all joints
-        print("=== Joint 0 (Base) Coupling Test ===")
-        self.apply_torque_and_measure(joint_idx=0, torque=1.0)
-        
-        # Test 2: Joint 5 (wrist) should have minimal effect on others
-        print("\n=== Joint 5 (Wrist) Isolation Test ===")
-        self.apply_torque_and_measure(joint_idx=5, torque=1.0)
-        
-        # Test 3: Joint 2 (elbow) should affect downstream joints
-        print("\n=== Joint 2 (Elbow) Coupling Test ===")
-        self.apply_torque_and_measure(joint_idx=2, torque=1.0)
-
-
-
-    def apply_torque_and_measure(self, joint_idx, torque):
-        initial_pos = self.articulation_view.get_joint_positions()[0][:6]
-        
-        for _ in range(10):
-            test_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
-            test_torques[joint_idx] = torque
-            self.articulation_view.set_joint_efforts(test_torques.reshape(1, -1))
-            self.world.step(render=True)
-        
-        final_pos = self.articulation_view.get_joint_positions()[0][:6]
-        change = final_pos - initial_pos
-        
-        print(f"Applied {torque} Nm to joint {joint_idx}")
-        print(f"Target joint moved: {change[joint_idx]:.6f} rad")
-        print(f"Max other joint movement: {np.max(np.abs(np.delete(change, joint_idx))):.6f} rad")
-        print(f"All changes: {change}")
