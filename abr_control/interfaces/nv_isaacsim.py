@@ -10,7 +10,7 @@ from omni.isaac.core.articulations import Articulation, ArticulationView # type:
 #TODO change import 
 #TODO is "Robot" even necessary 
 from isaacsim.core.api.robots import Robot # type: ignore
-from pxr import UsdGeom, Gf, UsdShade, Sdf # type: ignore  
+from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics# type: ignore  
 import omni.isaac.core.utils.stage as stage_utils # type: ignore   
 from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
 
@@ -33,7 +33,7 @@ class IsaacSim(Interface):
         super().__init__(robot_config)
         self.robot_config = robot_config
         self.dt = dt  # time step
-        self.count = 0  # keep track of how many times send forces is called
+        #self.count = 0  # keep track of how many times send forces is called
         self.prim_path = "/World/robot"
         self.name = self.robot_config.robot_type 
         
@@ -52,18 +52,13 @@ class IsaacSim(Interface):
         self.world.scene.add_default_ground_plane()
         self.context = omni.usd.get_context()
         self.stage = self.context.get_stage()
-         #TODO necessary for H1 robot
-        #self.world.add_physics_callback("send_actions", self.send_actions)
-       
-
         
+        
+        # Load the robot from USD file
         assets_root_path = get_assets_root_path()
         robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
         print(f"Robot '{self.robot_config.robot_type}' is loaded from USD path: {robot_usd_path}")
-        print(f"End Effector with name '{self.robot_config.ee_link_name}' specified in UDS, using it ...")
-       
-
-
+    
         stage_utils.add_reference_to_stage(
                 usd_path=robot_usd_path,
                 prim_path=self.prim_path,
@@ -80,8 +75,16 @@ class IsaacSim(Interface):
         self.articulation_view = ArticulationView(prim_paths_expr=self.prim_path, name=self.name + "_view")
         self.world.scene.add(self.articulation_view)
         self.articulation_view.initialize()
-       
+
         
+        
+
+        # add virtual EE if none exists
+        if (self.robot_config.has_EE is False):
+            print("Robot has no EE, virtual one is attached.")
+            self.add_virtual_ee_link(self.robot_config.EE_parent_link, self.robot_config.ee_link_name)
+        print("links 2 : ", self.articulation_view.body_names)
+
         # Set simulation time step
         self.world.get_physics_context().set_physics_dt(self.dt)
         
@@ -135,6 +138,10 @@ class IsaacSim(Interface):
             self.joint_vel_addrs,
             self.prim_path,
         )
+
+         #TODO necessary for H1 robot
+        #self.world.add_physics_callback("send_actions", self.send_actions)
+        
 
 
     def _map_joint_names(self, joint_names):
@@ -254,9 +261,9 @@ class IsaacSim(Interface):
     # method for keep_standing
     def send_actions(self, dt):
         pelvis_prim_path = '/World/robot/pelvis'  
-        prim=self.stage.GetPrimAtPath(pelvis_prim_path)
-        prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0 ,0.0 ,0.0 ,0.0))
-        prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0 ,0.0 ,0.02))
+        prim = self.stage.GetPrimAtPath(pelvis_prim_path)
+        prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0, 0.0, 0.0, 0.0))
+        prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0, 0.0, 0.85))
         #prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(0.70711 ,0.70711 ,0.0 ,0.0))
 
 
@@ -324,6 +331,86 @@ class IsaacSim(Interface):
 
 
 
+    def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
+        """Add virtual end effector link as an Xform under the specified parent link"""
+        # Full path to parent
+        parent_path = f"{self.prim_path}/{EE_parent_link}"
+
+        # Full path to the new EE transform, nested under parent
+        ee_prim_path = f"{parent_path}/{ee_name}"
+
+        # Create the Xform prim
+        ee_prim = UsdGeom.Xform.Define(self.stage, ee_prim_path)
+
+        # Set transform relative to parent
+        ee_prim.AddTranslateOp().Set(Gf.Vec3d(*offset))
+
+        print(f"Created virtual EE link at {ee_prim_path}")
+
+
+
+
+    
+    '''
+    def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
+        """Add virtual end effector link"""
+        # Create new prim for EE
+        ee_prim_path = f"{self.prim_path}/{ee_name}"
+        ee_prim = self.stage.DefinePrim(ee_prim_path, "Xform")
+        # Set transform relative to parent
+        xform = UsdGeom.Xform(ee_prim)
+        xform.AddTranslateOp().Set(Gf.Vec3d(*offset))
+        # Parent it to the hand link
+        parent_prim = self.stage.GetPrimAtPath(f"{self.prim_path}/{EE_parent_link}")
+        ee_prim.GetReferences().AddInternalReference(parent_prim.GetPath())
+    
+
+
+    def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
+        """Add virtual end effector link - FIXED VERSION with proper mass"""
+        # Create new prim for EE
+        ee_prim_path = f"{self.prim_path}/{ee_name}"
+        ee_prim = self.stage.DefinePrim(ee_prim_path, "Xform")
+        
+        # Set transform relative to parent
+        xform = UsdGeom.Xform(ee_prim)
+        xform.AddTranslateOp().Set(Gf.Vec3d(*offset))
+        
+        # Make it a physics body
+        rigid_body_api = UsdPhysics.RigidBodyAPI.Apply(ee_prim)
+        
+        # ADD PROPER MASS PROPERTIES:
+        mass_api = UsdPhysics.MassAPI.Apply(ee_prim)
+        mass_api.GetMassAttr().Set(0.001)  # 1 gram
+        
+        # Set proper inertia (for a small 5mm radius sphere)
+        inertia_val = 0.001 * (0.005 ** 2)  # ≈ 2.5e-8
+        inertia_diagonal = Gf.Vec3f(inertia_val, inertia_val, inertia_val)
+        mass_api.GetDiagonalInertiaAttr().Set(inertia_diagonal)
+        
+        # Create fixed joint to parent
+        joint_prim_path = f"{self.prim_path}/{ee_name}_joint"
+        joint_prim = UsdPhysics.FixedJoint.Define(self.stage, joint_prim_path)
+        
+        # Connect to parent
+        parent_prim_path = f"{self.prim_path}/{EE_parent_link}"
+        joint_prim.GetBody0Rel().SetTargets([parent_prim_path])
+        joint_prim.GetBody1Rel().SetTargets([ee_prim_path])
+        
+        # Set joint offset
+        joint_prim.GetLocalPos0Attr().Set(Gf.Vec3d(*offset))
+        joint_prim.GetLocalPos1Attr().Set(Gf.Vec3d(0, 0, 0))
+        
+        return ee_prim
+'''
+
+
+
+
+
+
+
+    '''
     def set_gains_position_control_min(self):
         """Set up position control with high stiffness"""
         n_dofs = self.robot_config.N_JOINTS
@@ -356,4 +443,51 @@ class IsaacSim(Interface):
         
         self.articulation_view.set_gains(stiffness, damping)
         print(f"Set gains for position control for arm joints {arm_joint_indices }")
+    '''
 
+
+
+
+
+
+
+
+
+
+
+
+    '''
+    
+    def add_virtual_ee_link_(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
+        """Add virtual end effector link"""
+        # Create new prim for EE
+        ee_prim_path = f"{self.prim_path}/{ee_name}"
+        ee_prim = self.stage.DefinePrim(ee_prim_path, "Xform")
+        
+        # Set transform relative to parent
+        xform = UsdGeom.Xform(ee_prim)
+        xform.AddTranslateOp().Set(Gf.Vec3d(*offset))
+        
+        # Get parent prim
+        parent_prim_path = f"{self.prim_path}/{EE_parent_link}"
+        parent_prim = self.stage.GetPrimAtPath(parent_prim_path)
+        
+        # Check if parent prim exists
+        if not parent_prim.IsValid():
+            print(f"Error: Parent prim '{parent_prim_path}' not found")
+            return None
+        
+        # Method 1: Set parent-child relationship using stage hierarchy
+        # This is the most straightforward approach for creating hierarchy
+        ee_prim_under_parent_path = f"{parent_prim_path}/{ee_name}"
+        ee_prim_under_parent = self.stage.DefinePrim(ee_prim_under_parent_path, "Xform")
+        
+        # Set transform on the correctly parented prim
+        xform_parented = UsdGeom.Xform(ee_prim_under_parent)
+        xform_parented.AddTranslateOp().Set(Gf.Vec3d(*offset))
+        
+        # Remove the original incorrectly placed prim
+        self.stage.RemovePrim(ee_prim_path)
+        
+        return ee_prim_under_parent
+        '''

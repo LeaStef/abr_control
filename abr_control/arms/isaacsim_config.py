@@ -79,24 +79,28 @@ class IsaacsimConfig:
         self.use_sim_state = use_sim_state
          
         self.robot_path = None
+        self.ee_link_name = "EE"  # name used for virtual end-effector, overwritten if one exists already
         
-        # Load the robot from USD file
         if self.robot_type == "ur5":
             self.robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
-            has_EE = False  # UR5 has no end-effector
-            EE_parent_link = "wrist_3_link"  # end-effector link for UR5
-            self.ee_link_name = "flange"  # end-effector name for UR5
+            self.has_EE = False  # UR5 has no end-effector
+            self.EE_parent_link = "wrist_3_link"  
             START_ANGLES = "0 -.67 -.67 0 0 0"
+            print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "jaco2":
             self.robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
-            self.ee_link_name = "j2n6s300_end_effector"  # end-effector name for Jaco2
+            self.has_EE = True  # jaco2 has an end-effector
+            self.ee_link_name = "j2n6s300_end_effector"  
             START_ANGLES = "2.0 3.14 1.57 4.71 0.0 3.04"
+            print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
                 
         elif self.robot_type == "h1":   
             self.robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
-            self.ee_link_name = "EE"  
+            self.has_EE = False  # H1 has no end-effector
+            self.EE_parent_link = "right_elbow_link"              
             START_ANGLES = "0 0 0 0"
+            print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         self.START_ANGLES = np.array(START_ANGLES.split(), dtype=float)
 
@@ -237,19 +241,20 @@ class IsaacsimConfig:
             if jacobians.shape[0] == 0:
                 raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
             
-            #link_index = self.articulation_view.get_link_index(name)
-            link_index = self.safe_get_link(name, default=6)
+            # jaco2 version
+            link_index = self.articulation_view.get_link_index(name)
+            
+            # parent version for ur5 and h1
+            #link_index = self.articulation_view.get_link_index(self.EE_parent_link)
+            
+            #link_index = self.safe_get_link(name, default=6)
             
             # Extract Jacobian for specific link
             env_idx = 0  # Assuming single environment
             
-            # Handle different Jacobian tensor shapes
-            # Based on your diagnostic: shape is (1, 13, 6, 12)
-            # This means: (num_envs, num_bodies, 6_dof_per_body, total_dofs)
+            # shape is (1, 13, 6, 12)
             if len(jacobians.shape) == 4:
                 # Shape: (num_envs, num_bodies, 6, num_dofs)
-                # Get Jacobian for the end-effector link (link_index 7)
-                #print("link_index: ", link_index)
                 J_full = jacobians[env_idx, link_index, :, :]
             elif len(jacobians.shape) == 3:
                 # Shape: (num_envs, num_bodies * 6, num_dofs)
@@ -328,6 +333,7 @@ class IsaacsimConfig:
         else:
             raise ValueError(f"Unsupported object type: {object_type}")
         
+        
         prim = self.stage.GetPrimAtPath(prim_path)
         if not prim.IsValid():
             raise RuntimeError(f"Prim '{prim_path}' not found")
@@ -364,7 +370,6 @@ class IsaacsimConfig:
 
         # Get 4x4 world transform matrix
         matrix = omni.usd.get_world_transform_matrix(prim)
-
         quat = matrix.ExtractRotationQuat()  
 
         # Convert to [w, x, y, z] NumPy array 
@@ -412,6 +417,10 @@ class IsaacsimConfig:
         else:
             raise ValueError(f"Unsupported object_type: {object_type}")
         
+        
+        #print("dof_names: ", self.articulation.dof_names)
+        #print("name :", name)
+        #print("prim_path :", prim_path)
         # Get world position
         prim = self.stage.GetPrimAtPath(prim_path)
         if not prim.IsValid():
@@ -496,10 +505,36 @@ class IsaacsimConfig:
         
         return link_index + 1
     
-
+    # remove
+    
     def safe_get_link(self, name, default=None):
-        try:
+        if self.has_EE is True:
             return self.articulation_view.get_link_index(name)
-        except KeyError:
-            print(f"Link '{name}' not found, using default: {default}")
+        else:
+            from pxr import UsdGeom
+
+            # Get the parent prim
+            parent_prim = self.stage.GetPrimAtPath(self.prim_path)
+
+
+            for child in parent_prim.GetChildren():
+                if child.GetName() == name:
+                    print("Found EE prim:", child.GetPath())
+                    ee_xform = UsdGeom.Xformable(self.stage.GetPrimAtPath(child.GetPath()))
+                    return ee_xform
+
             return default
+        
+
+    def adjoint_transform(offset=[0, 0, 0.05]):
+        r = np.asarray(offset)
+        S = np.array([
+            [0, -r[2], r[1]],
+            [r[2], 0, -r[0]],
+            [-r[1], r[0], 0]
+        ])
+        upper = np.hstack([np.eye(3), np.zeros((3,3))])
+        lower = np.hstack([-S, np.eye(3)])
+        adj = np.vstack([upper, lower])
+        return adj
+    

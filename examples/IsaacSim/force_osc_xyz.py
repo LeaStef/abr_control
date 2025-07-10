@@ -17,7 +17,7 @@ last_time = time.time()
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "jaco2"
+    arm_model = "ur5"
 robot_config = arm(arm_model)
 
 dt = 0.007  # 143 Hz 
@@ -100,6 +100,9 @@ try:
         )
 
         interface.send_forces(u)
+        #interface.world.step(render=True)
+
+
 
         # calculate end-effector position
         ee_xyz = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
