@@ -163,37 +163,24 @@ class IsaacsimConfig:
 
 
 
-    
+
     def g(self, q=None):
         """
-        Returns the joint-space forces due to gravity, Coriolis, and centrifugal effects
-        in Isaac Sim (equivalent to MuJoCo's qfrc_bias).
-
-        Parameters
-        ----------
-        q: np.ndarray, optional (Default: None)
-            Joint positions to compute the bias forces at. If None, uses current sim state.
+        Returns the gravity and Coriolis/centrifugal forces for the controlled arm_joints.
+        Args:
+            q (np.ndarray, optional): Joint positions
+        Returns:
+            np.ndarray: Generalized bias forces for controlled DOF
         """
         # Compute gravity and Coriolis/centrifugal separately
-        gravity = self.articulation_view.get_generalized_gravity_forces()
-        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces()
+        gravity = self.articulation_view.get_generalized_gravity_forces(joint_indices=self.joint_pos_addrs)[0]
+        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.joint_pos_addrs)[0]
         
-        # Total generalized bias forces
-        g_full = gravity + coriolis
-        
-        # Handle batch dimension if present
-        if g_full.ndim == 2:
-            if g_full.shape[0] == 1:
-                g_full = g_full[0]  # Remove batch dimension
-        
-        if q is not None:
-            # If q is provided, ensure g matches the size of q
-            if len(g_full) != len(q):
-                g_full = g_full[:len(q)]
+        g = gravity + coriolis
 
-        return -g_full
-        
+        return -g  
     
+        
 
     def dJ(self, name, q=None, dq=None, x=None):
         """Returns the derivative of the Jacobian wrt to time
@@ -242,12 +229,8 @@ class IsaacsimConfig:
                 raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
             
             # jaco2 version
-            link_index = self.articulation_view.get_link_index(name)
-            
-            # parent version for ur5 and h1
-            #link_index = self.articulation_view.get_link_index(self.EE_parent_link)
-            
-            #link_index = self.safe_get_link(name, default=6)
+            #link_index = self.articulation_view.get_link_index(name)
+            link_index = self.N_JOINTS -1
             
             # Extract Jacobian for specific link
             env_idx = 0  # Assuming single environment
@@ -490,51 +473,4 @@ class IsaacsimConfig:
                 full_velocities[idx] = dq[i]
             self.articulation.set_joint_velocities(full_velocities)
 
-    #TODO remove of fix method used for UR5
-    def _get_link_index(self, name):
-        """Get the index of a link by its name"""
-
-        import omni.isaac.core.utils.prims as prims_utils
-
-        prim_path = self._get_prim_path(name)
-        prim = prims_utils.get_prim_at_path(prim_path)
-        parent_prim = prims_utils.get_prim_parent(prim)
-        parent_name = parent_prim.GetName()
-        link_index = self.articulation_view.get_link_index(parent_name)
-        print(f"Link name: {name}, Prim path: {prim_path}, Parent name: {parent_name}, Link index: {link_index}")
-        
-        return link_index + 1
-    
-    # remove
-    
-    def safe_get_link(self, name, default=None):
-        if self.has_EE is True:
-            return self.articulation_view.get_link_index(name)
-        else:
-            from pxr import UsdGeom
-
-            # Get the parent prim
-            parent_prim = self.stage.GetPrimAtPath(self.prim_path)
-
-
-            for child in parent_prim.GetChildren():
-                if child.GetName() == name:
-                    print("Found EE prim:", child.GetPath())
-                    ee_xform = UsdGeom.Xformable(self.stage.GetPrimAtPath(child.GetPath()))
-                    return ee_xform
-
-            return default
-        
-
-    def adjoint_transform(offset=[0, 0, 0.05]):
-        r = np.asarray(offset)
-        S = np.array([
-            [0, -r[2], r[1]],
-            [r[2], 0, -r[0]],
-            [-r[1], r[0], 0]
-        ])
-        upper = np.hstack([np.eye(3), np.zeros((3,3))])
-        lower = np.hstack([-S, np.eye(3)])
-        adj = np.vstack([upper, lower])
-        return adj
-    
+ 

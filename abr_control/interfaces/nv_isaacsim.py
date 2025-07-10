@@ -78,12 +78,13 @@ class IsaacSim(Interface):
 
         
         
-
+        
         # add virtual EE if none exists
         if (self.robot_config.has_EE is False):
             print("Robot has no EE, virtual one is attached.")
             self.add_virtual_ee_link(self.robot_config.EE_parent_link, self.robot_config.ee_link_name)
         print("links 2 : ", self.articulation_view.body_names)
+        
 
         # Set simulation time step
         self.world.get_physics_context().set_physics_dt(self.dt)
@@ -110,22 +111,13 @@ class IsaacSim(Interface):
         for name in joint_names:
             if name not in all_joint_names:
                 raise Exception(f"Joint name {name} does not exist in robot model")
-            #TODO check if  joint_idx is necessary
+        
             joint_idx = all_joint_names.index(name)
             self.joint_pos_addrs.append(joint_idx)
             self.joint_vel_addrs.append(joint_idx)
+            #TODO check if joint_dyn_addrs necessary
             self.joint_dyn_addrs.append(joint_idx)
-        
 
-        '''
-        # is boolean flag necessary?
-        if has_EE:
-            print(f"End Effector with name '{self.ee_link_name}' specified in UDS, using it ...")
-        else:
-            print("No End Effector, creating EE Xform...")
-            ee_path = self.create_ee_xform(EE_parent_link, np.array([-0.04, 0, 0]))
-        #print("End Effector Info: ", ee_info)
-        '''
 
         # Connect robot config with simulation data
         print("Connecting to robot config...")
@@ -150,19 +142,23 @@ class IsaacSim(Interface):
         """
         # Get actual joint names from the robot
         actual_joint_names = self.articulation.dof_names
-        
-        # If input names are in MuJoCo format (joint0, joint1, etc.)
-        if all(name.startswith('joint') and name[5:].isdigit() for name in joint_names):
-            # Map by index: joint0 -> first joint, joint1 -> second joint, etc.
-            mapped_names = []
-            for name in joint_names:
-                joint_idx = int(name[5:])  # Extract number from "jointX"
-                if joint_idx < len(actual_joint_names):
-                    mapped_names.append(actual_joint_names[joint_idx])
-                else:
-                    raise Exception(f"Joint index {joint_idx} out of range. Robot has {len(actual_joint_names)} joints.")
-            return mapped_names
-        
+
+        if self.name is "h1":
+            joint_list = ['right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint']
+            return np.array(joint_list)
+        else:
+            # If input names are in MuJoCo format (joint0, joint1, etc.)
+            if all(name.startswith('joint') and name[5:].isdigit() for name in joint_names):
+                # Map by index: joint0 -> first joint, joint1 -> second joint, etc.
+                mapped_names = []
+                for name in joint_names:
+                    joint_idx = int(name[5:])  # Extract number from "jointX"
+                    if joint_idx < len(actual_joint_names):
+                        mapped_names.append(actual_joint_names[joint_idx])
+                    else:
+                        raise Exception(f"Joint index {joint_idx} out of range. Robot has {len(actual_joint_names)} joints.")
+                return mapped_names
+            
         # If names are already in correct format, return as-is
         return joint_names
 
@@ -330,7 +326,7 @@ class IsaacSim(Interface):
         print(f"Set gains for force control for arm joints {arm_joint_indices }")
 
 
-
+    
     def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
         """Add virtual end effector link as an Xform under the specified parent link"""
         # Full path to parent
@@ -348,69 +344,9 @@ class IsaacSim(Interface):
         print(f"Created virtual EE link at {ee_prim_path}")
 
 
-
+    '''
 
     
-    '''
-    def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
-        """Add virtual end effector link"""
-        # Create new prim for EE
-        ee_prim_path = f"{self.prim_path}/{ee_name}"
-        ee_prim = self.stage.DefinePrim(ee_prim_path, "Xform")
-        # Set transform relative to parent
-        xform = UsdGeom.Xform(ee_prim)
-        xform.AddTranslateOp().Set(Gf.Vec3d(*offset))
-        # Parent it to the hand link
-        parent_prim = self.stage.GetPrimAtPath(f"{self.prim_path}/{EE_parent_link}")
-        ee_prim.GetReferences().AddInternalReference(parent_prim.GetPath())
-    
-
-
-    def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
-        """Add virtual end effector link - FIXED VERSION with proper mass"""
-        # Create new prim for EE
-        ee_prim_path = f"{self.prim_path}/{ee_name}"
-        ee_prim = self.stage.DefinePrim(ee_prim_path, "Xform")
-        
-        # Set transform relative to parent
-        xform = UsdGeom.Xform(ee_prim)
-        xform.AddTranslateOp().Set(Gf.Vec3d(*offset))
-        
-        # Make it a physics body
-        rigid_body_api = UsdPhysics.RigidBodyAPI.Apply(ee_prim)
-        
-        # ADD PROPER MASS PROPERTIES:
-        mass_api = UsdPhysics.MassAPI.Apply(ee_prim)
-        mass_api.GetMassAttr().Set(0.001)  # 1 gram
-        
-        # Set proper inertia (for a small 5mm radius sphere)
-        inertia_val = 0.001 * (0.005 ** 2)  # ≈ 2.5e-8
-        inertia_diagonal = Gf.Vec3f(inertia_val, inertia_val, inertia_val)
-        mass_api.GetDiagonalInertiaAttr().Set(inertia_diagonal)
-        
-        # Create fixed joint to parent
-        joint_prim_path = f"{self.prim_path}/{ee_name}_joint"
-        joint_prim = UsdPhysics.FixedJoint.Define(self.stage, joint_prim_path)
-        
-        # Connect to parent
-        parent_prim_path = f"{self.prim_path}/{EE_parent_link}"
-        joint_prim.GetBody0Rel().SetTargets([parent_prim_path])
-        joint_prim.GetBody1Rel().SetTargets([ee_prim_path])
-        
-        # Set joint offset
-        joint_prim.GetLocalPos0Attr().Set(Gf.Vec3d(*offset))
-        joint_prim.GetLocalPos1Attr().Set(Gf.Vec3d(0, 0, 0))
-        
-        return ee_prim
-'''
-
-
-
-
-
-
-
-    '''
     def set_gains_position_control_min(self):
         """Set up position control with high stiffness"""
         n_dofs = self.robot_config.N_JOINTS
@@ -444,50 +380,3 @@ class IsaacSim(Interface):
         self.articulation_view.set_gains(stiffness, damping)
         print(f"Set gains for position control for arm joints {arm_joint_indices }")
     '''
-
-
-
-
-
-
-
-
-
-
-
-
-    '''
-    
-    def add_virtual_ee_link_(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
-        """Add virtual end effector link"""
-        # Create new prim for EE
-        ee_prim_path = f"{self.prim_path}/{ee_name}"
-        ee_prim = self.stage.DefinePrim(ee_prim_path, "Xform")
-        
-        # Set transform relative to parent
-        xform = UsdGeom.Xform(ee_prim)
-        xform.AddTranslateOp().Set(Gf.Vec3d(*offset))
-        
-        # Get parent prim
-        parent_prim_path = f"{self.prim_path}/{EE_parent_link}"
-        parent_prim = self.stage.GetPrimAtPath(parent_prim_path)
-        
-        # Check if parent prim exists
-        if not parent_prim.IsValid():
-            print(f"Error: Parent prim '{parent_prim_path}' not found")
-            return None
-        
-        # Method 1: Set parent-child relationship using stage hierarchy
-        # This is the most straightforward approach for creating hierarchy
-        ee_prim_under_parent_path = f"{parent_prim_path}/{ee_name}"
-        ee_prim_under_parent = self.stage.DefinePrim(ee_prim_under_parent_path, "Xform")
-        
-        # Set transform on the correctly parented prim
-        xform_parented = UsdGeom.Xform(ee_prim_under_parent)
-        xform_parented.AddTranslateOp().Set(Gf.Vec3d(*offset))
-        
-        # Remove the original incorrectly placed prim
-        self.stage.RemovePrim(ee_prim_path)
-        
-        return ee_prim_under_parent
-        '''
