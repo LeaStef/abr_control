@@ -83,7 +83,6 @@ class IsaacSim(Interface):
         if (self.robot_config.has_EE is False):
             print("Robot has no EE, virtual one is attached.")
             self.add_virtual_ee_link(self.robot_config.EE_parent_link, self.robot_config.ee_link_name)
-        print("links 2 : ", self.articulation_view.body_names)
         
 
         # Set simulation time step
@@ -327,7 +326,7 @@ class IsaacSim(Interface):
 
 
     
-    def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[0, 0, 0.05]):
+    def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[-0.04, 0, 0]):
         """Add virtual end effector link as an Xform under the specified parent link"""
         # Full path to parent
         parent_path = f"{self.prim_path}/{EE_parent_link}"

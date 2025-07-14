@@ -98,7 +98,7 @@ class IsaacsimConfig:
         elif self.robot_type == "h1":   
             self.robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
             self.has_EE = False  # H1 has no end-effector
-            self.EE_parent_link = "right_elbow_link"              
+            self.EE_parent_link = "right_elbow_link"
             START_ANGLES = "0 0 0 0"
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
@@ -204,8 +204,7 @@ class IsaacsimConfig:
         raise NotImplementedError
 
 
-
-
+    
     def J(self, name, q=None, x=None, object_type="body"):
         if name == "EE": 
             name = self.ee_link_name
@@ -230,7 +229,17 @@ class IsaacsimConfig:
             
             # jaco2 version
             #link_index = self.articulation_view.get_link_index(name)
-            link_index = self.N_JOINTS -1
+            #link_index = self.N_JOINTS -1
+            #print("link_index old: ", link_index)
+            #link_index = self.articulation_view.get_link_index(name)
+            #print("name: ", name, "     link_index new: ", link_index)
+
+            if self.robot_type is "ur5":
+                link_index = 5
+
+            elif self.robot_type is "jaco2":
+                link_index = 6
+
             
             # Extract Jacobian for specific link
             env_idx = 0  # Assuming single environment
@@ -273,6 +282,9 @@ class IsaacsimConfig:
             raise ValueError(f"Invalid object type specified: {object_type}")
         
         return np.copy(self._J6N)
+        
+
+
 
 
     def M(self, q=None):
@@ -290,7 +302,7 @@ class IsaacsimConfig:
         # If you have only one robot in ArticulationView
         M_full = M[0]
         # extract only the controlled DOF
-        M_arm = M_full[:self.N_JOINTS, :self.N_JOINTS]
+        M_arm = M_full[np.ix_(self.joint_pos_addrs, self.joint_pos_addrs)]
         return np.copy(M_arm)
 
 
@@ -399,11 +411,7 @@ class IsaacsimConfig:
             prim_path = self._get_prim_path(name)
         else:
             raise ValueError(f"Unsupported object_type: {object_type}")
-        
-        
-        #print("dof_names: ", self.articulation.dof_names)
-        #print("name :", name)
-        #print("prim_path :", prim_path)
+    
         # Get world position
         prim = self.stage.GetPrimAtPath(prim_path)
         if not prim.IsValid():
