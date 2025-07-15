@@ -130,8 +130,8 @@ class IsaacSim(Interface):
             self.prim_path,
         )
 
-         #TODO necessary for H1 robot
-        #self.world.add_physics_callback("send_actions", self.send_actions)
+        if self.robot_config.robot_type == "h1": 
+            self.world.add_physics_callback("send_actions", self.send_actions)
         
 
 
@@ -143,7 +143,11 @@ class IsaacSim(Interface):
         actual_joint_names = self.articulation.dof_names
 
         if self.name is "h1":
-            joint_list = ['right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint']
+            joint_list = ['torso_joint',                    # 1
+                          'right_shoulder_pitch_joint',     # 2
+                          'right_shoulder_roll_joint',      # 3
+                          'right_shoulder_yaw_joint',       # 4
+                          'right_elbow_joint']              # 5
             return np.array(joint_list)
         else:
             # If input names are in MuJoCo format (joint0, joint1, etc.)
