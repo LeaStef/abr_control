@@ -203,11 +203,11 @@ class IsaacSim(Interface):
 
 
     def send_forces(self, u):
-        """Applies the set of torques u to the arm - now working correctly!"""
+        """Applies the torques u to the joints specified in indices."""
         # Create full torque vector for all DOFs
         full_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
         # Apply control torques to the controlled joints
-        full_torques[:len(u)] = u
+        full_torques[self.joint_vel_addrs] = u
         # Apply the control signal
         self.articulation_view.set_joint_efforts(full_torques)
         # Move simulation ahead one time step
