@@ -102,6 +102,16 @@ class IsaacsimConfig:
             START_ANGLES = "0 0 0 0"
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
+        elif self.robot_type == "h1_hands":  
+            self.robot_path = "/Isaac/Robots/Unitree/H1/h1_with_hand.usd"
+            self.has_EE = True  # H1 has no end-effector
+            #self.EE_parent_link = "right_elbow_link"
+            self.ee_link_name = "right_hand_link"  
+            START_ANGLES = "0 0 0 0"
+            print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
+
+        
+
         self.START_ANGLES = np.array(START_ANGLES.split(), dtype=float)
 
         
@@ -162,6 +172,10 @@ class IsaacsimConfig:
         self.N_ALL_JOINTS = N_ALL_JOINTS
 
 
+       
+        
+
+
 
 
     def g(self, q=None):
@@ -205,6 +219,7 @@ class IsaacsimConfig:
 
 
     
+    
     def J(self, name, q=None, x=None, object_type="body"):
         if name == "EE": 
             name = self.ee_link_name
@@ -239,7 +254,14 @@ class IsaacsimConfig:
 
             elif self.robot_type is "jaco2":
                 link_index = 6
+            #  [6, 10, 14, 18]
+            elif self.robot_type is "h1":
+                link_index = 18
+            #  [6, 10, 14, 18, 20]
+            elif self.robot_type is "h1_hands":
+                link_index = 20
 
+           
             
             # Extract Jacobian for specific link
             env_idx = 0  # Assuming single environment
@@ -269,6 +291,13 @@ class IsaacsimConfig:
             self._J6N[:3, :] = J[:3, :]
             # Angular velocity Jacobian (last 3 rows)  
             self._J6N[3:, :] = J[3:, :]
+
+            #print(f"Robot type: {self.robot_type}")
+            #print(f"Link index: {link_index}")
+            #print(f"Arm joint indices: {self.joint_pos_addrs}")
+            #print(f"J_full shape: {J_full.shape}")
+            #print(f"J shape after filtering: {J.shape}")
+            #print(f"self.joint_pos_addrs: {self.joint_pos_addrs}")
             
             # Additional validation - check if Jacobian makes sense (non-zero values)
             if np.allclose(J, 0):
@@ -283,6 +312,52 @@ class IsaacsimConfig:
         
         return np.copy(self._J6N)
         
+
+        '''
+    
+    def J(self, name, q=None, x=None, object_type="body"):
+        
+        """
+        Returns the Jacobian for a specified end-effector link, projected onto controlled joints.
+
+        Parameters
+        ----------
+        ee_link_name : str
+            Name of the end-effector link (e.g., 'right_wrist_link')
+        controlled_joint_names : list of str
+            List of joint names to keep in the Jacobian columns.
+
+        Returns
+        -------
+        np.ndarray
+            (6, num_controlled_dofs) Jacobian [linear; angular]
+        """
+        if name == "EE": 
+            name = self.ee_link_name 
+
+        # Make sure physics is stepped
+        self.world.step(render=False)
+
+        # Get full Jacobians
+        jacobians = self.articulation_view.get_jacobians(clone=True)  # (1, num_links, 6, num_dofs)
+
+        # Get link index
+        #link_index = self.articulation_view.body_names.index(name)
+        link_index = self.articulation_view.body_names.index(self.EE_parent_link)
+
+
+        # Full 6 x N Jacobian for this link
+        #J_full = jacobians[0, link_index, :, :]  # shape (6, num_dofs)
+        J_full = jacobians[0, link_index, :, :]  # shape (6, num_dofs)
+
+
+        # Select only columns corresponding to controlled joints
+        #print("selected indices: ", self.joint_pos_addrs)
+        J_projected = J_full[:, self.joint_pos_addrs]  # shape (6, num_controlled_dofs)
+
+        return J_projected
+        '''
+
 
 
 
