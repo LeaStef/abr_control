@@ -11,8 +11,9 @@ from omni.isaac.core.articulations import Articulation, ArticulationView # type:
 #TODO is "Robot" even necessary 
 from isaacsim.core.api.robots import Robot # type: ignore
 from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics# type: ignore  
-import omni.isaac.core.utils.stage as stage_utils # type: ignore   
 from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
+from omni.isaac.core.utils.prims import define_prim
+from omni.isaac.core.utils.prims import create_prim
 
 
 
@@ -56,6 +57,9 @@ class IsaacSim(Interface):
         
         # Load the robot from USD file
         assets_root_path = get_assets_root_path()
+        #if self.robot_config.robot_type == "h1": 
+        #    robot_usd_path = "/home/steffen/Downloads/h1_wrist.usd"
+        #else:
         robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
         print(f"Robot '{self.robot_config.robot_type}' is loaded from USD path: {robot_usd_path}")
     
@@ -63,6 +67,15 @@ class IsaacSim(Interface):
                 usd_path=robot_usd_path,
                 prim_path=self.prim_path,
                 )
+        
+
+        
+        #if self.robot_config.robot_type == "h1": 
+        #    self.create_new_link_with_joint(parent_link = "/right_elbow_link", link_name = "/right_wrist_link", joint_name = "/right_wrist_joint")
+
+     
+
+
         robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
 
         
@@ -90,6 +103,8 @@ class IsaacSim(Interface):
         
         # Reset the world to initialize physics
         self.world.reset()
+
+
         
         # Get joint information
         self.joint_pos_addrs = []
@@ -106,7 +121,7 @@ class IsaacSim(Interface):
 
         # Validate joint names and get indices
         all_joint_names = self.articulation.dof_names
-        
+        print(all_joint_names)
         for name in joint_names:
             if name not in all_joint_names:
                 raise Exception(f"Joint name {name} does not exist in robot model")
@@ -130,8 +145,14 @@ class IsaacSim(Interface):
             self.prim_path,
         )
 
-        if self.robot_config.robot_type == "h1": 
+        if self.robot_config.robot_type == "h1_hands": 
             self.world.add_physics_callback("send_actions", self.send_actions)
+
+            
+
+
+
+
         
 
 
@@ -143,11 +164,20 @@ class IsaacSim(Interface):
         actual_joint_names = self.articulation.dof_names
 
         if self.name is "h1":
-            joint_list = ['torso_joint',                    # 1
-                          'right_shoulder_pitch_joint',     # 2
-                          'right_shoulder_roll_joint',      # 3
-                          'right_shoulder_yaw_joint',       # 4
-                          'right_elbow_joint']              # 5
+            joint_list = [#'torso_joint',                    
+                          'right_shoulder_pitch_joint',     
+                          'right_shoulder_roll_joint',      
+                          'right_shoulder_yaw_joint',       
+                          'right_elbow_joint'] ,
+                          #'right_wrist_joint']              
+            return np.array(joint_list)
+        
+        elif self.name is "h1_hands":
+            joint_list = ['right_shoulder_pitch_joint',     
+                          'right_shoulder_roll_joint',      
+                          'right_shoulder_yaw_joint',       
+                          'right_elbow_joint',
+                          'right_hand_joint']              
             return np.array(joint_list)
         else:
             # If input names are in MuJoCo format (joint0, joint1, etc.)
@@ -299,9 +329,9 @@ class IsaacSim(Interface):
         cube_prim.GetPrim().CreateAttribute("physics:collisionEnabled", Sdf.ValueTypeNames.Bool).Set(False)
 
         return cube_prim
-    
+  
 
-    #TODO not sure why this is necessary
+
     def set_gains_force_control(self):
         """Properly set gains for arm joints (DOFs 0-5) and finger joints if present"""
         
@@ -310,9 +340,7 @@ class IsaacSim(Interface):
         damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0     # Default damping
         
         # Set controlled arm joints to zero stiffness for force control
-        arm_joint_indices = list(range(self.robot_config.N_JOINTS)) 
-
-        for idx in arm_joint_indices:
+        for idx in self.joint_pos_addrs:
             stiffness[idx] = 0.0    # Zero stiffness = force control
             damping[idx] = 0.1      # Low damping for responsiveness
         
@@ -326,7 +354,7 @@ class IsaacSim(Interface):
                     damping[idx] = 5.0      # Moderate damping for fingers
             
         self.articulation_view.set_gains(stiffness, damping)
-        print(f"Set gains for force control for arm joints {arm_joint_indices }")
+        print(f"Set gains for force control for arm joints {self.joint_pos_addrs}")
 
 
     
@@ -346,6 +374,47 @@ class IsaacSim(Interface):
 
         print(f"Created virtual EE link at {ee_prim_path}")
 
+
+    # TODO check if all necessary or what could be omitted
+    # TODO maybe add offest?
+    def create_new_link_with_joint(self, parent_link , link_name, joint_name):
+            print ("IN METHOD")
+            right_elbow_link = self.prim_path + parent_link
+            right_wrist_link = self.prim_path + link_name
+            define_prim(right_wrist_link, "Xform")  
+
+            create_prim(
+                prim_path= right_wrist_link + "/geometry",
+                prim_type="Sphere",
+                attributes={"radius": 0.02},
+            )
+
+            # Apply physics APIs
+            UsdPhysics.RigidBodyAPI.Apply(self.stage.GetPrimAtPath(right_wrist_link))
+            UsdPhysics.CollisionAPI.Apply(self.stage.GetPrimAtPath(right_wrist_link))
+            mass_api = UsdPhysics.MassAPI.Apply(self.stage.GetPrimAtPath(right_wrist_link))
+            mass_api.CreateMassAttr(0.1)
+
+            # Create joint at ROOT level (not under elbow link)
+            #joint_prim_path = self.prim_path + joint_name
+            joint_prim_path = right_elbow_link + joint_name
+            joint = UsdPhysics.RevoluteJoint.Define(self.stage, joint_prim_path)
+            joint.CreateBody0Rel().SetTargets([right_elbow_link])
+            joint.CreateBody1Rel().SetTargets([right_wrist_link])
+            joint.CreateAxisAttr().Set("Z")
+            joint.CreateLowerLimitAttr().Set(-3.14)
+            joint.CreateUpperLimitAttr().Set(3.14)
+
+            # Drive API makes the joint controllable and appear in dof_names
+            drive_api = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), "angular")
+            drive_api.CreateTypeAttr("force")  # or "position"
+            drive_api.CreateMaxForceAttr(1000.0)
+
+            # Add joint name for articulation system
+            joint.GetPrim().CreateAttribute("physics:jointName", Sdf.ValueTypeNames.String).Set("right_wrist_joint")
+
+
+            self.robot_config.EE_parent_link = "right_wrist_link"
 
     '''
 
