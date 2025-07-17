@@ -74,6 +74,7 @@ class IsaacsimConfig:
             False: if the meshes folder is missing it will ask the user whether they
             want to download them
         """
+
         self.robot_type = robot_type
         #TODO obsolete, from mujoco
         self.use_sim_state = use_sim_state
@@ -86,6 +87,8 @@ class IsaacsimConfig:
             self.has_EE = False  # UR5 has no end-effector
             self.EE_parent_link = "wrist_3_link"  
             START_ANGLES = "0 -.67 -.67 0 0 0"
+            self.target_min = np.array([-0.5, -0.5, 0.5])
+            self.joint_names = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "jaco2":
@@ -93,6 +96,8 @@ class IsaacsimConfig:
             self.has_EE = True  # jaco2 has an end-effector
             self.ee_link_name = "j2n6s300_end_effector"  
             START_ANGLES = "2.0 3.14 1.57 4.71 0.0 3.04"
+            self.target_min = np.array([-0.5, -0.5, 0.5])
+            self.joint_names =  ['j2n6s300_joint_1', 'j2n6s300_joint_2', 'j2n6s300_joint_3', 'j2n6s300_joint_4', 'j2n6s300_joint_5', 'j2n6s300_joint_6']
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
                 
         elif self.robot_type == "h1":   
@@ -100,6 +105,9 @@ class IsaacsimConfig:
             self.has_EE = False  # H1 has no end-effector
             self.EE_parent_link = "right_elbow_link"
             START_ANGLES = "0 0 0 0"
+            self.target_min = np.array([0.1, -0.55, 1.4])
+            self.joint_names = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
+
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "h1_hands":  
@@ -107,7 +115,9 @@ class IsaacsimConfig:
             self.has_EE = True  # H1 has no end-effector
             #self.EE_parent_link = "right_elbow_link"
             self.ee_link_name = "right_hand_link"  
-            START_ANGLES = "0 0 0 0"
+            START_ANGLES = "0 0 0 0 0"
+            self.target_min = np.array([0.1, -0.55, 1.4])
+            self.joint_names = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
 
         
@@ -143,7 +153,6 @@ class IsaacsimConfig:
         self.joint_vel_addrs = np.copy(joint_vel_addrs)
         self.prim_path = prim_path
         self.N_JOINTS = len(self.joint_vel_addrs)
-        # number of joints in the IsaacSim simulation
         N_ALL_JOINTS = self.articulation_view.num_dof
 
         # need to calculate the joint_vel_addrs indices in flat vectors returned
@@ -172,12 +181,6 @@ class IsaacsimConfig:
         self.N_ALL_JOINTS = N_ALL_JOINTS
 
 
-       
-        
-
-
-
-
     def g(self, q=None):
         """
         Returns the gravity and Coriolis/centrifugal forces for the controlled arm_joints.
@@ -193,6 +196,7 @@ class IsaacsimConfig:
         g = gravity + coriolis
 
         return -g  
+        
     
         
 
@@ -253,7 +257,7 @@ class IsaacsimConfig:
                 link_index = 5
 
             elif self.robot_type is "jaco2":
-                link_index = 6
+                link_index = 5
             #  [6, 10, 14, 18]
             elif self.robot_type is "h1":
                 link_index = 18
@@ -311,52 +315,6 @@ class IsaacsimConfig:
             raise ValueError(f"Invalid object type specified: {object_type}")
         
         return np.copy(self._J6N)
-        
-
-        '''
-    
-    def J(self, name, q=None, x=None, object_type="body"):
-        
-        """
-        Returns the Jacobian for a specified end-effector link, projected onto controlled joints.
-
-        Parameters
-        ----------
-        ee_link_name : str
-            Name of the end-effector link (e.g., 'right_wrist_link')
-        controlled_joint_names : list of str
-            List of joint names to keep in the Jacobian columns.
-
-        Returns
-        -------
-        np.ndarray
-            (6, num_controlled_dofs) Jacobian [linear; angular]
-        """
-        if name == "EE": 
-            name = self.ee_link_name 
-
-        # Make sure physics is stepped
-        self.world.step(render=False)
-
-        # Get full Jacobians
-        jacobians = self.articulation_view.get_jacobians(clone=True)  # (1, num_links, 6, num_dofs)
-
-        # Get link index
-        #link_index = self.articulation_view.body_names.index(name)
-        link_index = self.articulation_view.body_names.index(self.EE_parent_link)
-
-
-        # Full 6 x N Jacobian for this link
-        #J_full = jacobians[0, link_index, :, :]  # shape (6, num_dofs)
-        J_full = jacobians[0, link_index, :, :]  # shape (6, num_dofs)
-
-
-        # Select only columns corresponding to controlled joints
-        #print("selected indices: ", self.joint_pos_addrs)
-        J_projected = J_full[:, self.joint_pos_addrs]  # shape (6, num_controlled_dofs)
-
-        return J_projected
-        '''
 
 
 
@@ -543,8 +501,7 @@ class IsaacsimConfig:
         """Set joint positions"""
         if hasattr(self, 'articulation'):
             full_positions = self.articulation.get_joint_positions()
-            for i, idx in enumerate(range(len(q))):
-                full_positions[idx] = q[i]
+            full_positions[self.joint_vel_addrs] = q
             self.articulation.set_joint_positions(full_positions)
     
 
@@ -552,8 +509,7 @@ class IsaacsimConfig:
         """Set joint velocities"""
         if hasattr(self, 'articulation'):
             full_velocities = self.articulation.get_joint_velocities()
-            for i, idx in enumerate(range(len(dq))):
-                full_velocities[idx] = dq[i]
+            full_velocities[self.joint_vel_addrs] = dq
             self.articulation.set_joint_velocities(full_velocities)
 
  

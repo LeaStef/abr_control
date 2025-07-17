@@ -12,9 +12,6 @@ from omni.isaac.core.articulations import Articulation, ArticulationView # type:
 from isaacsim.core.api.robots import Robot # type: ignore
 from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics# type: ignore  
 from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
-from omni.isaac.core.utils.prims import define_prim
-from omni.isaac.core.utils.prims import create_prim
-
 
 
 class IsaacSim(Interface):
@@ -68,12 +65,6 @@ class IsaacSim(Interface):
                 prim_path=self.prim_path,
                 )
         
-
-        
-        #if self.robot_config.robot_type == "h1": 
-        #    self.create_new_link_with_joint(parent_link = "/right_elbow_link", link_name = "/right_wrist_link", joint_name = "/right_wrist_joint")
-
-     
 
 
         robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
@@ -201,7 +192,6 @@ class IsaacSim(Interface):
         self.simulation_app.close() # close Isaac Sim
         print("IsaacSim connection closed...")
 
-
     def send_forces(self, u):
         """Applies the torques u to the joints specified in indices."""
         # Create full torque vector for all DOFs
@@ -209,10 +199,11 @@ class IsaacSim(Interface):
         # Apply control torques to the controlled joints
         full_torques[self.joint_vel_addrs] = u
         # Apply the control signal
+        #TODO maybe outsource as done for position
         self.articulation_view.set_joint_efforts(full_torques)
         # Move simulation ahead one time step
         self.world.step(render=True)
-
+       
 
     def send_target_angles(self, q):
         """Moves the arm to the specified joint angles
@@ -292,11 +283,13 @@ class IsaacSim(Interface):
         pelvis_prim_path = '/World/robot/pelvis'  
         prim = self.stage.GetPrimAtPath(pelvis_prim_path)
         prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0, 0.0, 0.0, 0.0))
-        prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0, 0.0, 0.85))
+        prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0, 0.0, 1.4))
         #prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(0.70711 ,0.70711 ,0.0 ,0.0))
 
+    
+   
 
-
+    #TODO check if position is even set here. maybe remove
     # Create a visual-only cube (no collision)
     def create_target_prim(self, prim_path="/World/target_cube", position=np.array([0, 0, 1.0]), size = .1, color=np.array([0, 0, 1.0])):        
         # Create cube geometry
@@ -307,6 +300,8 @@ class IsaacSim(Interface):
         xformable = UsdGeom.Xformable(cube_prim)
         transform_matrix = Gf.Matrix4d().SetTranslate(Gf.Vec3d(position[0], position[1], position[2]))
         xformable.MakeMatrixXform().Set(transform_matrix)
+        # xformable.AddTranslateOp().Set(Gf.Vec3f(*position))
+
         
         # Create and apply material for color
         material_path = prim_path + "/Material"
@@ -329,8 +324,8 @@ class IsaacSim(Interface):
         cube_prim.GetPrim().CreateAttribute("physics:collisionEnabled", Sdf.ValueTypeNames.Bool).Set(False)
 
         return cube_prim
-  
 
+    
 
     def set_gains_force_control(self):
         """Properly set gains for arm joints (DOFs 0-5) and finger joints if present"""
@@ -355,9 +350,8 @@ class IsaacSim(Interface):
             
         self.articulation_view.set_gains(stiffness, damping)
         print(f"Set gains for force control for arm joints {self.joint_pos_addrs}")
-
-
     
+
     def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[-0.04, 0, 0]):
         """Add virtual end effector link as an Xform under the specified parent link"""
         # Full path to parent
@@ -373,82 +367,3 @@ class IsaacSim(Interface):
         ee_prim.AddTranslateOp().Set(Gf.Vec3d(*offset))
 
         print(f"Created virtual EE link at {ee_prim_path}")
-
-
-    # TODO check if all necessary or what could be omitted
-    # TODO maybe add offest?
-    def create_new_link_with_joint(self, parent_link , link_name, joint_name):
-            print ("IN METHOD")
-            right_elbow_link = self.prim_path + parent_link
-            right_wrist_link = self.prim_path + link_name
-            define_prim(right_wrist_link, "Xform")  
-
-            create_prim(
-                prim_path= right_wrist_link + "/geometry",
-                prim_type="Sphere",
-                attributes={"radius": 0.02},
-            )
-
-            # Apply physics APIs
-            UsdPhysics.RigidBodyAPI.Apply(self.stage.GetPrimAtPath(right_wrist_link))
-            UsdPhysics.CollisionAPI.Apply(self.stage.GetPrimAtPath(right_wrist_link))
-            mass_api = UsdPhysics.MassAPI.Apply(self.stage.GetPrimAtPath(right_wrist_link))
-            mass_api.CreateMassAttr(0.1)
-
-            # Create joint at ROOT level (not under elbow link)
-            #joint_prim_path = self.prim_path + joint_name
-            joint_prim_path = right_elbow_link + joint_name
-            joint = UsdPhysics.RevoluteJoint.Define(self.stage, joint_prim_path)
-            joint.CreateBody0Rel().SetTargets([right_elbow_link])
-            joint.CreateBody1Rel().SetTargets([right_wrist_link])
-            joint.CreateAxisAttr().Set("Z")
-            joint.CreateLowerLimitAttr().Set(-3.14)
-            joint.CreateUpperLimitAttr().Set(3.14)
-
-            # Drive API makes the joint controllable and appear in dof_names
-            drive_api = UsdPhysics.DriveAPI.Apply(joint.GetPrim(), "angular")
-            drive_api.CreateTypeAttr("force")  # or "position"
-            drive_api.CreateMaxForceAttr(1000.0)
-
-            # Add joint name for articulation system
-            joint.GetPrim().CreateAttribute("physics:jointName", Sdf.ValueTypeNames.String).Set("right_wrist_joint")
-
-
-            self.robot_config.EE_parent_link = "right_wrist_link"
-
-    '''
-
-    
-    def set_gains_position_control_min(self):
-        """Set up position control with high stiffness"""
-        n_dofs = self.robot_config.N_JOINTS
-        stiffness = np.ones(n_dofs) * 1000.0  # High stiffness for position control
-        damping = np.ones(n_dofs) * 100.0     # High damping for stability
-        
-        self.articulation_view.set_gains(stiffness, damping)
-
-
-    def set_gains_position_control(self):
-        """Properly set gains for arm joints for position control and finger joints if present"""
-        # Get current gains or set defaults
-        stiffness = np.ones(self.robot_config.N_ALL_JOINTS) * 100.0  # Default high stiffness
-        damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0     # Default damping
-        
-        # Set controlled arm joints to HIGH stiffness for position control
-        arm_joint_indices = list(range(self.robot_config.N_JOINTS))
-        for idx in arm_joint_indices:
-            stiffness[idx] = 1000.0  # High stiffness = position control
-            damping[idx] = 100.0     # High damping for stability
-        
-        # Keep finger joints with some stiffness if you want them stable
-        if self.robot_config.N_ALL_JOINTS > self.robot_config.N_JOINTS:
-            dof_names = self.articulation_view.dof_names
-            finger_joint_indices = list(range(self.robot_config.N_JOINTS, self.robot_config.N_ALL_JOINTS))
-            for idx in finger_joint_indices:
-                if "finger" in dof_names[idx].lower():
-                    stiffness[idx] = 50.0  # Moderate stiffness for fingers
-                    damping[idx] = 5.0     # Moderate damping for fingers
-        
-        self.articulation_view.set_gains(stiffness, damping)
-        print(f"Set gains for position control for arm joints {arm_joint_indices }")
-    '''

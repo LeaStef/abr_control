@@ -15,14 +15,15 @@ from abr_control.interfaces.nv_isaacsim import IsaacSim
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "ur5"
-    #arm_model = "jaco2"
+    arm_model = "h1_hands"
+    #arm_model = "ur5"
 # initialize our robot config
 robot_config = arm(arm_model)
 # create the IsaacSim interface and connect up
-interface = IsaacSim(robot_config, dt=0.001)
+interface = IsaacSim(robot_config, dt = 0.007)
 interface.connect(joint_names=[f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))])
 interface.send_target_angles(robot_config.START_ANGLES)
+interface.set_gains_force_control()
 
 
 # instantiate the controller
@@ -36,7 +37,7 @@ q_track = []
 try:
     # get the end-effector's initial position
     feedback = interface.get_feedback()
-    start = robot_config.Tx(interface.ee_link_name, q=feedback["q"])
+    start = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
     print("\nSimulation starting...\n")
     while 1:
         # get joint angle and velocity feedback
@@ -45,11 +46,12 @@ try:
         # calculate the control signal
         u = ctrlr.generate(q=feedback["q"], dq=feedback["dq"])
 
-        # send forces into Mujoco
+        # send forces into Isaacsim
         interface.send_forces(u)
+        #interface.world.step(render=True)
 
         # calculate the position of the hand
-        hand_xyz = robot_config.Tx(interface.ee_link_name, q=feedback["q"])
+        hand_xyz = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
         # track end effector position
         ee_track.append(np.copy(hand_xyz))
         q_track.append(np.copy(feedback["q"]))
@@ -60,7 +62,7 @@ except:
 
 finally:
     # close the connection to the arm
-    interface.disconnect()
+    #interface.disconnect()
 
     print("Simulation terminated...")
 

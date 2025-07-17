@@ -17,7 +17,7 @@ last_time = time.time()
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "ur5"
+    arm_model = "ur5" #"h1_hands"
 robot_config = arm(arm_model)
 
 dt = 0.007  # 143 Hz 
@@ -28,11 +28,11 @@ target_prim_path="/World/target"
 interface = IsaacSim(robot_config, dt=dt)
 
 interface.connect(joint_names=[f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))])
-#dof_names = interface.articulation.dof_names
-#print("dof_names: " + dof_names)
+
 
 interface.send_target_angles(robot_config.START_ANGLES)
-isaac_target = interface.create_target_prim(prim_path=target_prim_path)
+#isaac_target = interface.create_target_prim(prim_path=target_prim_path)
+interface.create_target_prim(target_prim_path)
 
 
 interface.set_gains_force_control()
@@ -59,10 +59,23 @@ green = [0, 0.9, 0, 0.5]
 red = [0.9, 0, 0, 0.5]
 
 np.random.seed(0)
+'''
 def gen_target(interface):
     target_xyz = (np.random.rand(3) + np.array([-0.5, -0.5, 0.5])) * np.array(
         [1, 1, 0.5]
     )
+    interface.set_xyz(target_prim_path, target_xyz)
+
+
+def gen_target(interface):
+    target_xyz = (np.random.rand(3) + np.array([0.1, -0.5, 0.5])) * np.array([1, -0.1, 1.5])
+    interface.set_xyz(target_prim_path, target_xyz)
+'''
+
+def gen_target(interface):
+    target_min = robot_config.target_min
+    target_range = np.array([1, 1, 0.5])
+    target_xyz = (target_min + np.random.rand(3)) * target_range
     interface.set_xyz(target_prim_path, target_xyz)
 
 try:
@@ -101,7 +114,6 @@ try:
 
         interface.send_forces(u)
         #interface.world.step(render=True)
-
 
 
         # calculate end-effector position
