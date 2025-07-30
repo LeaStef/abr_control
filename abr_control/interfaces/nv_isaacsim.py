@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from isaacsim import SimulationApp
 from .interface import Interface
 simulation_app = SimulationApp({"headless": False}) 
@@ -12,6 +13,8 @@ from omni.isaac.core.articulations import Articulation, ArticulationView # type:
 from isaacsim.core.api.robots import Robot # type: ignore
 from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics# type: ignore  
 from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
+from isaacsim.robot.policy.examples.robots import H1FlatTerrainPolicy # type: ignore
+import omni.isaac.core.utils.numpy.rotations as rot_utils  # type: ignore
 
 
 class IsaacSim(Interface):
@@ -33,6 +36,7 @@ class IsaacSim(Interface):
         self.dt = dt  # time step
         #self.count = 0  # keep track of how many times send forces is called
         self.prim_path = "/World/robot"
+        #remove?
         self.name = self.robot_config.robot_type 
         
 
@@ -50,24 +54,31 @@ class IsaacSim(Interface):
         self.world.scene.add_default_ground_plane()
         self.context = omni.usd.get_context()
         self.stage = self.context.get_stage()
-        
-        
+
+
         # Load the robot from USD file
         assets_root_path = get_assets_root_path()
-        #if self.robot_config.robot_type == "h1": 
-        #    robot_usd_path = "/home/steffen/Downloads/h1_wrist.usd"
-        #else:
         robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
         print(f"Robot '{self.robot_config.robot_type}' is loaded from USD path: {robot_usd_path}")
-    
-        stage_utils.add_reference_to_stage(
-                usd_path=robot_usd_path,
+        
+        if self.robot_config.robot_type.startswith("h1"):
+            self.h1 = H1FlatTerrainPolicy(
                 prim_path=self.prim_path,
-                )
+                name=self.name,
+                usd_path=robot_usd_path,
+                position=np.array([0, 0 , 0]),
+                orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, 0]), degrees=True),
+            )
+
+        else:    
+            stage_utils.add_reference_to_stage(
+                    usd_path=robot_usd_path,
+                    prim_path=self.prim_path,
+                    )
+            robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
+
         
 
-
-        robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
 
         
         self.world.reset()
@@ -136,7 +147,7 @@ class IsaacSim(Interface):
             self.prim_path,
         )
 
-        if self.robot_config.robot_type == "h1_hands": 
+        if self.robot_config.robot_type.startswith("h1"):
             self.world.add_physics_callback("send_actions", self.send_actions)
 
             
@@ -192,17 +203,57 @@ class IsaacSim(Interface):
         self.simulation_app.close() # close Isaac Sim
         print("IsaacSim connection closed...")
 
+
+   
     def send_forces(self, u):
         """Applies the torques u to the joints specified in indices."""
+        #print ("send forces")
         # Create full torque vector for all DOFs
         full_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
         # Apply control torques to the controlled joints
-        full_torques[self.joint_vel_addrs] = u
+        full_torques[self.joint_pos_addrs] = u
         # Apply the control signal
         #TODO maybe outsource as done for position
         self.articulation_view.set_joint_efforts(full_torques)
         # Move simulation ahead one time step
         self.world.step(render=True)
+    '''
+
+
+    def send_forces(self, u):
+        """Applies the torques u to the joints specified in indices."""
+        
+        #def test_single_joint_force(self, joint_index, force_value=2.0):
+        
+
+        joint_list = ['right_shoulder_pitch_joint',     
+                          'right_shoulder_roll_joint',      
+                          'right_shoulder_yaw_joint',       
+                          'right_elbow_joint',
+                          'right_hand_joint']  
+
+        # Create zero torque array
+        test_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
+
+        test_torques[self.joint_pos_addrs] = u * 0.1
+        
+    
+        print(f"Applied torque: {u} ")
+        print(f"Torque array: {test_torques}")
+        
+        # Apply the torque
+        self.articulation_view.set_joint_efforts(test_torques)
+        
+        # Let it run for a moment to observe
+        for _ in range(100):  # Run for ~1 second at 100Hz
+            self.world.step(render=True)
+        
+        print("Observe which joint moved and in what direction")
+        print("Press Enter to continue to next joint...")
+        input()
+         '''
+
+
        
 
     def send_target_angles(self, q):
@@ -339,18 +390,23 @@ class IsaacSim(Interface):
             stiffness[idx] = 0.0    # Zero stiffness = force control
             damping[idx] = 0.1      # Low damping for responsiveness
         
-        # Keep finger joints with some stiffness if you want them stable
-        if self.robot_config.N_ALL_JOINTS > self.robot_config.N_JOINTS:
-            dof_names = self.articulation_view.dof_names
-            finger_joint_indices = list(range(self.robot_config.N_JOINTS, self.robot_config.N_ALL_JOINTS))
-            for idx in finger_joint_indices:
-                if "finger" in dof_names[idx].lower():
-                    stiffness[idx] = 50.0   # Moderate stiffness for fingers
-                    damping[idx] = 5.0      # Moderate damping for fingers
-            
+  
         self.articulation_view.set_gains(stiffness, damping)
         print(f"Set gains for force control for arm joints {self.joint_pos_addrs}")
     
+
+    
+    def set_gains_force_control_h1(self):
+        stiffness = np.ones(self.robot_config.N_ALL_JOINTS) * 100.0
+        damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0
+        
+        for idx in self.joint_pos_addrs:
+            stiffness[idx]  =  20.0 # 4. # Small but non-zero stiffness
+            damping[idx]    =  5.0   # 1.0   # Higher damping for stability
+
+        self.articulation_view.set_gains(stiffness, damping)
+
+
 
     def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[-0.04, 0, 0]):
         """Add virtual end effector link as an Xform under the specified parent link"""

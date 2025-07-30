@@ -1,11 +1,5 @@
-from xml.etree import ElementTree
 import numpy as np
-from abr_control.utils import download_meshes
 import omni
-
-
-
-
 
 
 class IsaacsimConfig:
@@ -83,41 +77,45 @@ class IsaacsimConfig:
         self.ee_link_name = "EE"  # name used for virtual end-effector, overwritten if one exists already
         
         if self.robot_type == "ur5":
+            self.ctrlr_dof = [True, True, True, False, False, False]
             self.robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
             self.has_EE = False  # UR5 has no end-effector
             self.EE_parent_link = "wrist_3_link"  
             START_ANGLES = "0 -.67 -.67 0 0 0"
             self.target_min = np.array([-0.5, -0.5, 0.5])
-            self.joint_names = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
+            self.controlled_joints = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "jaco2":
+            self.ctrlr_dof = [True, True, True, False, False, False]
             self.robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
             self.has_EE = True  # jaco2 has an end-effector
             self.ee_link_name = "j2n6s300_end_effector"  
             START_ANGLES = "2.0 3.14 1.57 4.71 0.0 3.04"
             self.target_min = np.array([-0.5, -0.5, 0.5])
-            self.joint_names =  ['j2n6s300_joint_1', 'j2n6s300_joint_2', 'j2n6s300_joint_3', 'j2n6s300_joint_4', 'j2n6s300_joint_5', 'j2n6s300_joint_6']
+            self.controlled_joints = ['j2n6s300_joint_1', 'j2n6s300_joint_2', 'j2n6s300_joint_3', 'j2n6s300_joint_4', 'j2n6s300_joint_5', 'j2n6s300_joint_6']
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
                 
         elif self.robot_type == "h1":   
+            self.ctrlr_dof = [True, True, True, False]
             self.robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
             self.has_EE = False  # H1 has no end-effector
             self.EE_parent_link = "right_elbow_link"
-            START_ANGLES = "0 0 0 0"
+            START_ANGLES = "0. 0. 0. 0."
             self.target_min = np.array([0.1, -0.55, 1.4])
-            self.joint_names = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
+            self.controlled_joints = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
 
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "h1_hands":  
+            self.ctrlr_dof = [True, True, True, False, False]
             self.robot_path = "/Isaac/Robots/Unitree/H1/h1_with_hand.usd"
             self.has_EE = True  # H1 has no end-effector
             #self.EE_parent_link = "right_elbow_link"
             self.ee_link_name = "right_hand_link"  
-            START_ANGLES = "0 0 0 0 0"
+            START_ANGLES = "0. 0. 0. 0. 0."
             self.target_min = np.array([0.1, -0.55, 1.4])
-            self.joint_names = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
+            self.controlled_joints = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
 
         
@@ -191,12 +189,11 @@ class IsaacsimConfig:
         """
         # Compute gravity and Coriolis/centrifugal separately
         gravity = self.articulation_view.get_generalized_gravity_forces(joint_indices=self.joint_pos_addrs)[0]
-        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.joint_pos_addrs)[0]
-        
-        g = gravity + coriolis
+        #coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.joint_pos_addrs)[0]
+        #g = gravity + coriolis
 
-        return -g  
-        
+        return -gravity
+        #return -g          
     
         
 
@@ -245,13 +242,6 @@ class IsaacsimConfig:
             # Check if ArticulationView has any environments
             if jacobians.shape[0] == 0:
                 raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
-            
-            # jaco2 version
-            #link_index = self.articulation_view.get_link_index(name)
-            #link_index = self.N_JOINTS -1
-            #print("link_index old: ", link_index)
-            #link_index = self.articulation_view.get_link_index(name)
-            #print("name: ", name, "     link_index new: ", link_index)
 
             if self.robot_type is "ur5":
                 link_index = 5
@@ -264,10 +254,7 @@ class IsaacsimConfig:
             #  [6, 10, 14, 18, 20]
             elif self.robot_type is "h1_hands":
                 link_index = 20
-
-           
             
-            # Extract Jacobian for specific link
             env_idx = 0  # Assuming single environment
             
             # shape is (1, 13, 6, 12)
@@ -315,9 +302,6 @@ class IsaacsimConfig:
             raise ValueError(f"Invalid object type specified: {object_type}")
         
         return np.copy(self._J6N)
-
-
-
 
 
     def M(self, q=None):
@@ -405,6 +389,7 @@ class IsaacsimConfig:
       
         return quat_np
 
+
     def C(self, q=None, dq=None):
         """NOTE: The Coriolis and centrifugal effects (and gravity) are
         already accounted for by Mujoco in the qfrc_bias variable. There's
@@ -412,10 +397,9 @@ class IsaacsimConfig:
         To prevent accounting for these effects twice, this function will
         return an error instead of qfrc_bias again.
         """
-        raise NotImplementedError(
-            "Coriolis and centrifugal effects already accounted "
-            + "for in the term return by the gravity function."
-        )
+        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.joint_pos_addrs)[0]
+        return coriolis
+
 
     def T(self, name, q=None, x=None):
         """Get the transform matrix of the specified body.
@@ -486,7 +470,7 @@ class IsaacsimConfig:
         """Get current joint positions"""
         if hasattr(self, 'articulation'):
             all_positions = self.articulation.get_joint_positions()
-            return all_positions[self.joint_vel_addrs]
+            return all_positions[self.joint_pos_addrs]
         return None
 
     def get_joint_velocities(self):
@@ -512,4 +496,3 @@ class IsaacsimConfig:
             full_velocities[self.joint_vel_addrs] = dq
             self.articulation.set_joint_velocities(full_velocities)
 
- 
