@@ -17,7 +17,7 @@ last_time = time.time()
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "ur5" #"h1_hands"
+    arm_model = "h1"
 robot_config = arm(arm_model)
 
 dt = 0.007  # 143 Hz 
@@ -27,16 +27,17 @@ target_prim_path="/World/target"
 # create our IsaacSim interface
 interface = IsaacSim(robot_config, dt=dt)
 
-interface.connect(joint_names=[f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))])
+#joint_names = [f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))]
+#interface.connect(joint_names=robot_config.controlled_joints)
+interface.connect()
 
 
 interface.send_target_angles(robot_config.START_ANGLES)
-#isaac_target = interface.create_target_prim(prim_path=target_prim_path)
-interface.create_target_prim(target_prim_path)
+isaac_target = interface.create_target_prim(prim_path=target_prim_path)
 
 
-interface.set_gains_force_control()
-
+#interface.set_gains_force_control()
+interface.set_gains_force_control_h1()
 
 # damp the movements of the arm
 damping = Damping(robot_config, kv=30)  #kv=10)
@@ -47,7 +48,8 @@ ctrlr = OSC(
     null_controllers=[damping],
     vmax=[0.5, 0],  # [m/s, rad/s]
     # control (x, y, z) out of [x, y, z, alpha, beta, gamma]
-    ctrlr_dof=[True, True, True, False, False, False],
+    ctrlr_dof= [True, True, True, False, False, False]
+    #ctrlr_dof= robot_config.ctrlr_dof
 )
 
 # set up lists for tracking data
@@ -59,24 +61,18 @@ green = [0, 0.9, 0, 0.5]
 red = [0.9, 0, 0, 0.5]
 
 np.random.seed(0)
-'''
-def gen_target(interface):
-    target_xyz = (np.random.rand(3) + np.array([-0.5, -0.5, 0.5])) * np.array(
-        [1, 1, 0.5]
-    )
-    interface.set_xyz(target_prim_path, target_xyz)
-
-
-def gen_target(interface):
-    target_xyz = (np.random.rand(3) + np.array([0.1, -0.5, 0.5])) * np.array([1, -0.1, 1.5])
-    interface.set_xyz(target_prim_path, target_xyz)
-'''
 
 def gen_target(interface):
     target_min = robot_config.target_min
     target_range = np.array([1, 1, 0.5])
     target_xyz = (target_min + np.random.rand(3)) * target_range
     interface.set_xyz(target_prim_path, target_xyz)
+
+
+
+interface.debug_dof_mapping()
+
+
 
 try:
     # get the end-effector's initial position
@@ -104,7 +100,7 @@ try:
                 ),
             ]
         )
-
+        
         # calculate the control signal
         u = ctrlr.generate(
             q=feedback["q"],
@@ -112,8 +108,10 @@ try:
             target=target,
         )
 
+
         interface.send_forces(u)
-        #interface.world.step(render=True)
+        # interface.world.step(render=True)
+        
 
 
         # calculate end-effector position

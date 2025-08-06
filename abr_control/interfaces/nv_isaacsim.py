@@ -110,29 +110,43 @@ class IsaacSim(Interface):
         
         # Get joint information
         self.joint_pos_addrs = []
+        self.joint_alt_pos_addrs = []
         self.joint_vel_addrs = []
         self.joint_dyn_addrs = []
         
         if joint_names is None:
             print("No joint names provided, using all controllable joints in the articulation.")
-            # Get all controllable joints in the articulation
-            joint_names = self.articulation.dof_names          
-        else:
-            # Handle joint name mapping
-            joint_names = self._map_joint_names(joint_names)
+            joint_names = self.robot_config.controlled_joints
+
+            
+
 
         # Validate joint names and get indices
-        all_joint_names = self.articulation.dof_names
-        print(all_joint_names)
+        self.all_dof_names = self.articulation.dof_names
+        # joint_names = self.articulation_view.joint_names  # The 24-joint list
+        print(f"All dof names: {self.all_dof_names}")
+        print(f"All link names: {self.articulation_view.body_names}")
+        print(f"Provided joint names: {joint_names}")
+
+
         for name in joint_names:
-            if name not in all_joint_names:
+            if name not in self.all_dof_names:
                 raise Exception(f"Joint name {name} does not exist in robot model")
-        
-            joint_idx = all_joint_names.index(name)
-            self.joint_pos_addrs.append(joint_idx)
-            self.joint_vel_addrs.append(joint_idx)
+            #print(f"name: {name}")
+            #link_name = name.replace("joint", "link")
+            #print(f"link_name: {link_name}")
+           
+
+            #joint_idx = self.articulation_view.get_joint_index(name)
+            dof_idx = self.articulation_view.get_dof_index(name)
+            #print(f"dof_index: {dof_idx}")
+            #print(f"joint_idx: {joint_idx}")
+            # link_idx = self.articulation_view.get_link_index(link_name)
+            # print(f"link_idx: {link_idx}")
+            self.joint_pos_addrs.append(dof_idx)
+            self.joint_vel_addrs.append(dof_idx)
             #TODO check if joint_dyn_addrs necessary
-            self.joint_dyn_addrs.append(joint_idx)
+            self.joint_dyn_addrs.append(dof_idx)
 
 
         # Connect robot config with simulation data
@@ -143,6 +157,7 @@ class IsaacSim(Interface):
             self.articulation,
             self.articulation_view,
             self.joint_pos_addrs,
+            self.joint_alt_pos_addrs,
             self.joint_vel_addrs,
             self.prim_path,
         )
@@ -152,50 +167,8 @@ class IsaacSim(Interface):
 
             
 
-
-
-
         
 
-
-    def _map_joint_names(self, joint_names):
-        """
-        Map joint names from MuJoCo format to IsaacSim format
-        """
-        # Get actual joint names from the robot
-        actual_joint_names = self.articulation.dof_names
-
-        if self.name is "h1":
-            joint_list = [#'torso_joint',                    
-                          'right_shoulder_pitch_joint',     
-                          'right_shoulder_roll_joint',      
-                          'right_shoulder_yaw_joint',       
-                          'right_elbow_joint'] ,
-                          #'right_wrist_joint']              
-            return np.array(joint_list)
-        
-        elif self.name is "h1_hands":
-            joint_list = ['right_shoulder_pitch_joint',     
-                          'right_shoulder_roll_joint',      
-                          'right_shoulder_yaw_joint',       
-                          'right_elbow_joint',
-                          'right_hand_joint']              
-            return np.array(joint_list)
-        else:
-            # If input names are in MuJoCo format (joint0, joint1, etc.)
-            if all(name.startswith('joint') and name[5:].isdigit() for name in joint_names):
-                # Map by index: joint0 -> first joint, joint1 -> second joint, etc.
-                mapped_names = []
-                for name in joint_names:
-                    joint_idx = int(name[5:])  # Extract number from "jointX"
-                    if joint_idx < len(actual_joint_names):
-                        mapped_names.append(actual_joint_names[joint_idx])
-                    else:
-                        raise Exception(f"Joint index {joint_idx} out of range. Robot has {len(actual_joint_names)} joints.")
-                return mapped_names
-            
-        # If names are already in correct format, return as-is
-        return joint_names
 
 
     def disconnect(self):
@@ -203,8 +176,59 @@ class IsaacSim(Interface):
         self.simulation_app.close() # close Isaac Sim
         print("IsaacSim connection closed...")
 
+    '''
+    def send_forces(self, u):
+        """Applies the torques u to the joints specified in indices."""
+        
+        # Debug: Check array sizes and indices
+        print(f"=== SEND_FORCES DEBUG ===")
+        print(f"robot_config.N_ALL_JOINTS: {self.robot_config.N_ALL_JOINTS}")
+        print(f"articulation_view joint count: {len(self.articulation_view.joint_names)}")
+        print(f"joint_pos_addrs: {self.joint_pos_addrs}")
+        print(f"u shape: {u.shape}")
+        print(f"Max index in joint_pos_addrs: {max(self.joint_pos_addrs) if self.joint_pos_addrs else 'None'}")
+        
+        # Use the correct joint count for the articulation view
+        total_joints = len(self.articulation_view.joint_names)  # Should be 24
+        full_torques = np.zeros(total_joints)
+        
+        # Apply control torques to the controlled joints
+        full_torques[self.joint_pos_addrs] = u
+        
+        print(f"full_torques shape: {full_torques.shape}")
+        print(f"Non-zero torques at indices: {np.nonzero(full_torques)[0]}")
+        
+        # Apply the control signal
+        self.articulation_view.set_joint_efforts(full_torques)
+        
+        # Move simulation ahead one time step
+        self.world.step(render=True)
+        '''
 
-   
+
+
+    def debug_dof_mapping(self):
+        print("=== DOF MAPPING DEBUG ===")
+        print(f"robot_config.N_ALL_JOINTS: {self.robot_config.N_ALL_JOINTS}")
+        print(f"articulation.dof_names length: {len(self.articulation.dof_names)}")
+        print(f"articulation_view.dof_names length: {len(self.articulation_view.dof_names)}")
+        print(f"articulation_view.joint_names length: {len(self.articulation_view.joint_names)}")
+        
+        print("\nDOF names (actuated joints):")
+        dof_names = self.articulation.dof_names
+        for i, name in enumerate(dof_names):
+            print(f"  {i}: {name}")
+        
+        print("\nLooking for controlled joints in DOF names:")
+        for joint_name in self.robot_config.controlled_joints:
+            if joint_name in dof_names:
+                idx = dof_names.index(joint_name)
+                print(f"  {joint_name}: DOF index {idx}")
+            else:
+                print(f"  {joint_name}: NOT FOUND in DOF names!")
+
+
+    
     def send_forces(self, u):
         """Applies the torques u to the joints specified in indices."""
         #print ("send forces")
@@ -217,41 +241,9 @@ class IsaacSim(Interface):
         self.articulation_view.set_joint_efforts(full_torques)
         # Move simulation ahead one time step
         self.world.step(render=True)
-    '''
-
-
-    def send_forces(self, u):
-        """Applies the torques u to the joints specified in indices."""
-        
-        #def test_single_joint_force(self, joint_index, force_value=2.0):
-        
-
-        joint_list = ['right_shoulder_pitch_joint',     
-                          'right_shoulder_roll_joint',      
-                          'right_shoulder_yaw_joint',       
-                          'right_elbow_joint',
-                          'right_hand_joint']  
-
-        # Create zero torque array
-        test_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
-
-        test_torques[self.joint_pos_addrs] = u * 0.1
-        
     
-        print(f"Applied torque: {u} ")
-        print(f"Torque array: {test_torques}")
-        
-        # Apply the torque
-        self.articulation_view.set_joint_efforts(test_torques)
-        
-        # Let it run for a moment to observe
-        for _ in range(100):  # Run for ~1 second at 100Hz
-            self.world.step(render=True)
-        
-        print("Observe which joint moved and in what direction")
-        print("Press Enter to continue to next joint...")
-        input()
-         '''
+
+
 
 
        
@@ -395,16 +387,30 @@ class IsaacSim(Interface):
         print(f"Set gains for force control for arm joints {self.joint_pos_addrs}")
     
 
-    
+
+
     def set_gains_force_control_h1(self):
+
+        self.articulation_view.switch_control_mode(
+            mode="effort",
+            joint_indices=self.joint_pos_addrs
+            )
+        
         stiffness = np.ones(self.robot_config.N_ALL_JOINTS) * 100.0
         damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0
         
-        for idx in self.joint_pos_addrs:
-            stiffness[idx]  =  20.0 # 4. # Small but non-zero stiffness
-            damping[idx]    =  5.0   # 1.0   # Higher damping for stability
+        # Use the correct DOF indices
+        for dof_idx in self.joint_pos_addrs:
+            stiffness[dof_idx] = 20.0
+            damping[dof_idx] = 5.0
+            print(f"Set gains for DOF {dof_idx}: {self.all_dof_names[dof_idx]}")
+        
+        # Reshape for ArticulationView: (M, K)
+        stiffness = np.expand_dims(stiffness, axis=0)
+        damping = np.expand_dims(damping, axis=0)
 
         self.articulation_view.set_gains(stiffness, damping)
+
 
 
 
@@ -423,3 +429,4 @@ class IsaacSim(Interface):
         ee_prim.AddTranslateOp().Set(Gf.Vec3d(*offset))
 
         print(f"Created virtual EE link at {ee_prim_path}")
+
