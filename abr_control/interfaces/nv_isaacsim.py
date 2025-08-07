@@ -38,6 +38,11 @@ class IsaacSim(Interface):
         self.prim_path = "/World/robot"
         #remove?
         self.name = self.robot_config.robot_type 
+
+
+
+        self.prev_target = None
+        self.prev_joints = None
         
 
     def connect(self, joint_names=None, camera_id=-1):
@@ -109,41 +114,47 @@ class IsaacSim(Interface):
 
         
         # Get joint information
-        self.joint_pos_addrs = []
-        self.joint_alt_pos_addrs = []
+        #self.joint_pos_addrs = []
+        self.dof_indices = []
+        self.joint_indices = []
         self.joint_vel_addrs = []
         self.joint_dyn_addrs = []
         
         if joint_names is None:
             print("No joint names provided, using all controllable joints in the articulation.")
-            joint_names = self.robot_config.controlled_joints
+            joint_names = self.robot_config.controlled_dof
 
             
 
 
-        # Validate joint names and get indices
+        # Validate dof names and get indices
         self.all_dof_names = self.articulation.dof_names
-        # joint_names = self.articulation_view.joint_names  # The 24-joint list
-        print(f"All dof names: {self.all_dof_names}")
-        print(f"All link names: {self.articulation_view.body_names}")
-        print(f"Provided joint names: {joint_names}")
+        self.all_joint_names = self.articulation_view.joint_names
+        self.all_body_names = self.articulation_view.body_names 
+        #self.all_link_names = self.articulation_view.link_names
+        print(f"len dof names: {len(self.all_dof_names)}")
+        print(f"len joint names: {len(self.all_joint_names)}")
+        print(f"len body names: {len(self.all_body_names)}")
+        #print(f"len link names: {len(self.all_link_names)}")    
+        #print(f"Provided joint names: {joint_names}")
 
 
         for name in joint_names:
-            if name not in self.all_dof_names:
+            if name not in self.all_dof_names and name not in self.all_joint_names:
                 raise Exception(f"Joint name {name} does not exist in robot model")
             #print(f"name: {name}")
             #link_name = name.replace("joint", "link")
             #print(f"link_name: {link_name}")
            
 
-            #joint_idx = self.articulation_view.get_joint_index(name)
+            joint_idx = self.articulation_view.get_joint_index(name)
             dof_idx = self.articulation_view.get_dof_index(name)
             #print(f"dof_index: {dof_idx}")
             #print(f"joint_idx: {joint_idx}")
             # link_idx = self.articulation_view.get_link_index(link_name)
             # print(f"link_idx: {link_idx}")
-            self.joint_pos_addrs.append(dof_idx)
+            self.dof_indices.append(dof_idx)
+            self.joint_indices.append(joint_idx)
             self.joint_vel_addrs.append(dof_idx)
             #TODO check if joint_dyn_addrs necessary
             self.joint_dyn_addrs.append(dof_idx)
@@ -156,8 +167,8 @@ class IsaacSim(Interface):
             self.stage,
             self.articulation,
             self.articulation_view,
-            self.joint_pos_addrs,
-            self.joint_alt_pos_addrs,
+            self.dof_indices,
+            self.joint_indices,
             self.joint_vel_addrs,
             self.prim_path,
         )
@@ -220,7 +231,7 @@ class IsaacSim(Interface):
             print(f"  {i}: {name}")
         
         print("\nLooking for controlled joints in DOF names:")
-        for joint_name in self.robot_config.controlled_joints:
+        for joint_name in self.robot_config.controlled_dof:
             if joint_name in dof_names:
                 idx = dof_names.index(joint_name)
                 print(f"  {joint_name}: DOF index {idx}")
@@ -233,9 +244,9 @@ class IsaacSim(Interface):
         """Applies the torques u to the joints specified in indices."""
         #print ("send forces")
         # Create full torque vector for all DOFs
-        full_torques = np.zeros(self.robot_config.N_ALL_JOINTS)
+        full_torques = np.zeros(self.robot_config.N_ALL_DOF)
         # Apply control torques to the controlled joints
-        full_torques[self.joint_pos_addrs] = u
+        full_torques[self.dof_indices] = u
         # Apply the control signal
         #TODO maybe outsource as done for position
         self.articulation_view.set_joint_efforts(full_torques)
@@ -374,17 +385,17 @@ class IsaacSim(Interface):
         """Properly set gains for arm joints (DOFs 0-5) and finger joints if present"""
         
         # Get current gains or set defaults
-        stiffness = np.ones(self.robot_config.N_ALL_JOINTS) * 100.0  # Default high stiffness
-        damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0     # Default damping
+        stiffness = np.ones(self.robot_config.N_ALL_DOF) * 100.0  # Default high stiffness
+        damping = np.ones(self.robot_config.N_ALL_DOF) * 10.0     # Default damping
         
         # Set controlled arm joints to zero stiffness for force control
-        for idx in self.joint_pos_addrs:
+        for idx in self.dof_indices:
             stiffness[idx] = 0.0    # Zero stiffness = force control
             damping[idx] = 0.1      # Low damping for responsiveness
         
   
         self.articulation_view.set_gains(stiffness, damping)
-        print(f"Set gains for force control for arm joints {self.joint_pos_addrs}")
+        print(f"Set gains for force control for arm joints {self.dof_indices}")
     
 
 
@@ -393,14 +404,14 @@ class IsaacSim(Interface):
 
         self.articulation_view.switch_control_mode(
             mode="effort",
-            joint_indices=self.joint_pos_addrs
+            joint_indices=self.dof_indices
             )
         
-        stiffness = np.ones(self.robot_config.N_ALL_JOINTS) * 100.0
-        damping = np.ones(self.robot_config.N_ALL_JOINTS) * 10.0
+        stiffness = np.ones(self.robot_config.N_ALL_DOF) * 100.0
+        damping = np.ones(self.robot_config.N_ALL_DOF) * 10.0
         
         # Use the correct DOF indices
-        for dof_idx in self.joint_pos_addrs:
+        for dof_idx in self.dof_indices:
             stiffness[dof_idx] = 20.0
             damping[dof_idx] = 5.0
             print(f"Set gains for DOF {dof_idx}: {self.all_dof_names[dof_idx]}")
@@ -429,4 +440,51 @@ class IsaacSim(Interface):
         ee_prim.AddTranslateOp().Set(Gf.Vec3d(*offset))
 
         print(f"Created virtual EE link at {ee_prim_path}")
+
+
+    def debug_target_and_joints(self):
+        """Debug target movement and controlled joint response"""
+        
+        target_pos = self.get_xyz("/World/target")
+
+        # Target movement
+        if self.prev_target is not None:
+            target_change = target_pos - self.prev_target
+            target_change_mag = np.linalg.norm(target_change)
+            if target_change_mag > 0.01:
+                print(f"Target moved: {target_change} (mag: {target_change_mag:.4f})")
+        
+        # Get current joint positions
+        joint_positions = self.articulation_view.get_joint_positions()
+        joint_velocities = self.articulation_view.get_joint_velocities()
+        
+        current_joints = []
+        for idx in self.dof_indices:
+            pos = joint_positions[0, idx] if joint_positions.ndim > 1 else joint_positions[idx]
+            current_joints.append(pos)
+        current_joints = np.array(current_joints)
+        
+        # Joint movements
+        if self.prev_joints is not None:
+            joint_changes = current_joints - self.prev_joints
+            if target_change_mag > 0.01:
+                print("Joint Changes:")
+            dof_names = self.articulation.dof_names
+            for i, idx in enumerate(self.dof_indices):
+                joint_name = dof_names[idx].replace('_joint', '').replace('right_', '')
+                pos_change_deg = joint_changes[i] * 180 / 3.14159
+                vel = joint_velocities[0, idx] if joint_velocities.ndim > 1 else joint_velocities[idx]
+                if target_change_mag > 0.01:
+                    print(f"  {joint_name}: {joint_changes[i]:.4f}rad ({pos_change_deg:.2f}°) vel:{vel:.3f}")
+        else:
+            print("Initial joint positions:")
+            dof_names = self.articulation.dof_names
+            for i, idx in enumerate(self.dof_indices):
+                joint_name = dof_names[idx].replace('_joint', '').replace('right_', '')
+                pos_deg = current_joints[i] * 180 / 3.14159
+                print(f"  {joint_name}: {current_joints[i]:.4f}rad ({pos_deg:.2f}°)")
+        
+        # Store for next comparison
+        self.prev_target = target_pos.copy()
+        self.prev_joints = current_joints.copy()
 

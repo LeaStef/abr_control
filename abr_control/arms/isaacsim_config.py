@@ -83,7 +83,7 @@ class IsaacsimConfig:
             self.EE_parent_link = "wrist_3_link"  
             START_ANGLES = "0 -.67 -.67 0 0 0"
             self.target_min = np.array([-0.5, -0.5, 0.5])
-            self.controlled_joints = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
+            self.controlled_dof = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "jaco2":
@@ -93,7 +93,7 @@ class IsaacsimConfig:
             self.ee_link_name = "j2n6s300_end_effector"  
             START_ANGLES = "2.0 3.14 1.57 4.71 0.0 3.04"
             self.target_min = np.array([-0.5, -0.5, 0.5])
-            self.controlled_joints = ['j2n6s300_joint_1', 'j2n6s300_joint_2', 'j2n6s300_joint_3', 'j2n6s300_joint_4', 'j2n6s300_joint_5', 'j2n6s300_joint_6']
+            self.controlled_dof = ['j2n6s300_joint_1', 'j2n6s300_joint_2', 'j2n6s300_joint_3', 'j2n6s300_joint_4', 'j2n6s300_joint_5', 'j2n6s300_joint_6']
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
                 
         elif self.robot_type == "h1":   
@@ -104,7 +104,7 @@ class IsaacsimConfig:
             #self.ee_link_name = "right_elbow_link"  
             START_ANGLES = "0. 0. 0. 0."
             self.target_min = np.array([0.1, -0.55, 1.4])
-            self.controlled_joints = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
+            self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
 
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
@@ -116,7 +116,7 @@ class IsaacsimConfig:
             self.ee_link_name = "right_hand_link"  
             START_ANGLES = "0. 0. 0. 0. 0."
             self.target_min = np.array([0.1, -0.55, 1.4])
-            self.controlled_joints = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
+            self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
 
         
@@ -125,7 +125,7 @@ class IsaacsimConfig:
 
         
 
-    def _connect(self, world, stage, articulation, articulation_view, joint_pos_addrs, joint_alt_pos_addrs, joint_vel_addrs, prim_path):
+    def _connect(self, world, stage, articulation, articulation_view, dof_indices, joint_indices, joint_vel_addrs, prim_path):
 
         """Called by the interface once the Mujoco simulation is created,
         this connects the config to the simulator so it can access the
@@ -135,7 +135,7 @@ class IsaacsimConfig:
         ----------
         sim: MjSim
             The Mujoco Simulator object created by the Mujoco Interface class
-        joint_pos_addrs: np.array of ints
+        dof_indices: np.array of ints
             The index of the robot joints in the Mujoco simulation data joint
             position array
         joint_vel_addrs: np.array of ints
@@ -148,43 +148,42 @@ class IsaacsimConfig:
         self.stage = stage
         self.articulation = articulation
         self.articulation_view = articulation_view
-        self.joint_pos_addrs = np.copy(joint_pos_addrs)
-        # alternative joint addresses, used for the Jacobian
-        self.joint_alt_pos_addrs = np.copy(joint_alt_pos_addrs)
+        self.dof_indices = np.copy(dof_indices)
+        self.joint_indices = np.copy(joint_indices)
         self.joint_vel_addrs = np.copy(joint_vel_addrs)
         self.prim_path = prim_path
-        self.N_JOINTS = len(self.joint_vel_addrs)
-        N_ALL_JOINTS = self.articulation_view.num_dof
+        self.N_JOINTS = len(self.dof_indices)
+        self.N_ALL_DOF = self.articulation_view.num_dof
+        self.N_ALL_JOINTS = self.articulation_view.num_joints
 
         # need to calculate the joint_vel_addrs indices in flat vectors returned
         # for the Jacobian
         self.jac_indices = np.hstack(
             # 6 because position and rotation Jacobians are 3 x N_JOINTS
-            [self.joint_vel_addrs + (ii * N_ALL_JOINTS) for ii in range(3)]
+            [self.joint_vel_addrs + (ii * self.N_ALL_JOINTS) for ii in range(3)]
         )
 
         # for the inertia matrix
         self.M_indices = [
-            ii * N_ALL_JOINTS + jj
-            for jj in self.joint_vel_addrs
-            for ii in self.joint_vel_addrs
+            ii * self.N_ALL_JOINTS + jj
+            for jj in self.dof_indices
+            for ii in self.dof_indices
         ]
 
-        # a place to store data returned from Mujoco
+        # a place to store data returned from IsaacSim
         self._g = np.zeros(self.N_JOINTS)
-        self._J3NP = np.zeros((3, N_ALL_JOINTS))
-        self._J3NR = np.zeros((3, N_ALL_JOINTS))
+        self._J3NP = np.zeros((3, self.N_ALL_JOINTS))
+        self._J3NR = np.zeros((3, self.N_ALL_JOINTS))
         self._J6N = np.zeros((6, self.N_JOINTS))
-        self._MNN = np.zeros((N_ALL_JOINTS, N_ALL_JOINTS))
+        self._MNN = np.zeros((self.N_ALL_JOINTS, self.N_ALL_JOINTS))
         self._R9 = np.zeros(9)
         self._R = np.zeros((3, 3))
         self._x = np.ones(4)
-        self.N_ALL_JOINTS = N_ALL_JOINTS
 
     '''
     def g(self, q=None):
         g_full = self.articulation_view.get_generalized_gravity_forces()[0]
-        return -g_full[self.joint_pos_addrs]
+        return -g_full[self.dof_indices]
     '''
 
 
@@ -197,8 +196,8 @@ class IsaacsimConfig:
             np.ndarray: Generalized bias forces for controlled DOF
         """
         # Compute gravity and Coriolis/centrifugal separately
-        gravity = self.articulation_view.get_generalized_gravity_forces(joint_indices=self.joint_pos_addrs)[0]
-        #coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.joint_pos_addrs)[0]
+        gravity = self.articulation_view.get_generalized_gravity_forces(joint_indices=self.dof_indices)[0]
+        #coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.dof_indices)[0]
         #g = gravity + coriolis
 
         return -gravity
@@ -229,7 +228,6 @@ class IsaacsimConfig:
         raise NotImplementedError
 
 
-    
 
 
     def J(self, name, q=None, x=None,  object_type="body"):
@@ -237,7 +235,10 @@ class IsaacsimConfig:
             jacobians = self.articulation_view.get_jacobians(clone=True)
             if jacobians.shape[0] == 0:
                 raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
-    
+
+            print("###################################")
+            print("jacobians shape: ", jacobians.shape)
+            print("###################################")
             # TODO this could be fixed by attachind virtual EE
             if self.robot_type is "ur5":
                 link_index = 5
@@ -258,12 +259,12 @@ class IsaacsimConfig:
             if len(jacobians.shape) == 4:
                 # Fixed articulation base (robotic manipulators): (env, num_bodies - 1, 6, num_dof)
                 if self.is_fixed_base():
-                    jacobian_columns = self.joint_pos_addrs
+                    jacobian_columns = self.dof_indices
                     
                 # Non-fixed articulation base (mobile robots): (env, num_bodies, 6, num_dof + base_dofs)
                 else:
                     jacobian_base_offset = 2  # Empirically determined for H1
-                    jacobian_columns = self.joint_pos_addrs + jacobian_base_offset
+                    jacobian_columns = self.dof_indices + jacobian_base_offset
                    
             else:
                 raise RuntimeError(f"Unexpected jacobians shape: {jacobians.shape}")
@@ -294,46 +295,15 @@ class IsaacsimConfig:
         return np.copy(self._J6N)
 
 
-
-
     def M(self, q=None):
         """
         Returns the inertia matrix for the controlled arm joints.
         """
-        M = self.articulation_view.get_mass_matrices()
-        M_full = M[0]
-        
-        # Fixed articulation base (robotic manipulators): 
-        if self.is_fixed_base():
-            M_arm = M_full[np.ix_(self.joint_pos_addrs, self.joint_pos_addrs)]
-                    
-         # Non-fixed articulation base (mobile robots): 
-        else:
-            controlled_indices = self.joint_pos_addrs + 6
-            M_arm = M_full[np.ix_(controlled_indices, controlled_indices)]
-
-        return np.copy(M_arm)
-
-    
-    '''
-    def M(self, q=None):
-        """
-        Returns the inertia matrix for the controlled arm_joints.
-        Args:
-            q (np.ndarray, optional): Joint positions
-            indices (optional): Specific articulation indices
-            
-        Returns:
-            np.ndarray: Inertia matrix
-        """
-        # get_mass_matrices returns (num_envs, dof_count, dof_count)
-        M = self.articulation_view.get_mass_matrices()
-        # If you have only one robot in ArticulationView
-        M_full = M[0]
-        # extract only the controlled DOF
-        M_arm = M_full[np.ix_(self.joint_pos_addrs, self.joint_pos_addrs)]
-        return np.copy(M_arm)
-    '''
+        # get_mass_matrices returns (num_envs, joint_count, joint_count)
+        self._MNN= self.articulation_view.get_mass_matrices()[0]
+        # extract only the controlled joints
+        M = self._MNN[np.ix_(self.joint_indices, self.joint_indices)]
+        return np.copy(M)
 
 
     def R(self, name, q=None, object_type="body"):
@@ -410,7 +380,7 @@ class IsaacsimConfig:
         To prevent accounting for these effects twice, this function will
         return an error instead of qfrc_bias again.
         """
-        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.joint_pos_addrs)[0]
+        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.dof_indices)[0]
         return coriolis
 
 
@@ -483,7 +453,7 @@ class IsaacsimConfig:
         """Get current joint positions"""
         if hasattr(self, 'articulation'):
             all_positions = self.articulation.get_joint_positions()
-            return all_positions[self.joint_pos_addrs]
+            return all_positions[self.dof_indices]
         return None
 
     def get_joint_velocities(self):
@@ -498,7 +468,7 @@ class IsaacsimConfig:
         """Set joint positions"""
         if hasattr(self, 'articulation'):
             full_positions = self.articulation.get_joint_positions()
-            full_positions[self.joint_vel_addrs] = q
+            full_positions[self.dof_indices] = q
             self.articulation.set_joint_positions(full_positions)
     
 
