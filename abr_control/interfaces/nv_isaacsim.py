@@ -1,5 +1,4 @@
 import numpy as np
-import math
 from isaacsim import SimulationApp
 from .interface import Interface
 simulation_app = SimulationApp({"headless": False}) 
@@ -8,10 +7,8 @@ import omni.kit.commands # type: ignore
 import omni.isaac.core.utils.stage as stage_utils # type: ignore   
 from omni.isaac.core import World # type: ignore
 from omni.isaac.core.articulations import Articulation, ArticulationView # type: ignore
-#TODO change import 
-#TODO is "Robot" even necessary 
-from isaacsim.core.api.robots import Robot # type: ignore
-from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics# type: ignore  
+from omni.isaac.core.robots import Robot # type: ignore
+from pxr import UsdGeom, Gf, UsdShade, Sdf # type: ignore
 from omni.isaac.core.utils.nucleus import get_assets_root_path # type: ignore
 from isaacsim.robot.policy.examples.robots import H1FlatTerrainPolicy # type: ignore
 import omni.isaac.core.utils.numpy.rotations as rot_utils  # type: ignore
@@ -29,23 +26,15 @@ class IsaacSim(Interface):
         simulation time step in seconds
 
     """
-    def __init__(self, robot_config, dt=0.001, force_download=False):
+    def __init__(self, robot_config, dt=0.001):
 
         super().__init__(robot_config)
         self.robot_config = robot_config
         self.dt = dt  # time step
-        #self.count = 0  # keep track of how many times send forces is called
         self.prim_path = "/World/robot"
-        #remove?
-        self.name = self.robot_config.robot_type 
 
 
-
-        self.prev_target = None
-        self.prev_joints = None
-        
-
-    def connect(self, joint_names=None, camera_id=-1):
+    def connect(self, joint_names=None):
         """
         joint_names: list, optional (Default: None)
             list of joint names to send control signal to and get feedback from
@@ -60,7 +49,6 @@ class IsaacSim(Interface):
         self.context = omni.usd.get_context()
         self.stage = self.context.get_stage()
 
-
         # Load the robot from USD file
         assets_root_path = get_assets_root_path()
         robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
@@ -69,7 +57,7 @@ class IsaacSim(Interface):
         if self.robot_config.robot_type.startswith("h1"):
             self.h1 = H1FlatTerrainPolicy(
                 prim_path=self.prim_path,
-                name=self.name,
+                name=self.robot_config.robot_type,
                 usd_path=robot_usd_path,
                 position=np.array([0, 0 , 0]),
                 orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, 0]), degrees=True),
@@ -80,23 +68,19 @@ class IsaacSim(Interface):
                     usd_path=robot_usd_path,
                     prim_path=self.prim_path,
                     )
-            robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.name))
+            robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.robot_config.robot_type))
 
-        
-
-
+    
         
         self.world.reset()
-        self.articulation = Articulation(prim_path=self.prim_path, name=self.name + "_articulation")
+        self.articulation = Articulation(prim_path=self.prim_path, name=self.robot_config.robot_type + "_articulation")
         self.articulation.initialize()
         self.world.scene.add(self.articulation) # Add to scene if not already added by higher-level env
 
         #TODO remove and replace with articulation
-        self.articulation_view = ArticulationView(prim_paths_expr=self.prim_path, name=self.name + "_view")
+        self.articulation_view = ArticulationView(prim_paths_expr=self.prim_path, name=self.robot_config.robot_type + "_view")
         self.world.scene.add(self.articulation_view)
         self.articulation_view.initialize()
-
-        
         
         
         # add virtual EE if none exists
@@ -110,55 +94,28 @@ class IsaacSim(Interface):
         
         # Reset the world to initialize physics
         self.world.reset()
-
-
         
         # Get joint information
-        #self.joint_pos_addrs = []
         self.dof_indices = []
         self.joint_indices = []
-        self.joint_vel_addrs = []
         self.joint_dyn_addrs = []
         
         if joint_names is None:
             print("No joint names provided, using all controllable joints in the articulation.")
             joint_names = self.robot_config.controlled_dof
 
-            
-
-
-        # Validate dof names and get indices
         self.all_dof_names = self.articulation.dof_names
         self.all_joint_names = self.articulation_view.joint_names
         self.all_body_names = self.articulation_view.body_names 
-        #self.all_link_names = self.articulation_view.link_names
-        print(f"len dof names: {len(self.all_dof_names)}")
-        print(f"len joint names: {len(self.all_joint_names)}")
-        print(f"len body names: {len(self.all_body_names)}")
-        #print(f"len link names: {len(self.all_link_names)}")    
-        #print(f"Provided joint names: {joint_names}")
-
 
         for name in joint_names:
             if name not in self.all_dof_names and name not in self.all_joint_names:
                 raise Exception(f"Joint name {name} does not exist in robot model")
-            #print(f"name: {name}")
-            #link_name = name.replace("joint", "link")
-            #print(f"link_name: {link_name}")
-           
-
             joint_idx = self.articulation_view.get_joint_index(name)
             dof_idx = self.articulation_view.get_dof_index(name)
-            #print(f"dof_index: {dof_idx}")
-            #print(f"joint_idx: {joint_idx}")
-            # link_idx = self.articulation_view.get_link_index(link_name)
-            # print(f"link_idx: {link_idx}")
             self.dof_indices.append(dof_idx)
             self.joint_indices.append(joint_idx)
-            self.joint_vel_addrs.append(dof_idx)
-            #TODO check if joint_dyn_addrs necessary
-            self.joint_dyn_addrs.append(dof_idx)
-
+           
 
         # Connect robot config with simulation data
         print("Connecting to robot config...")
@@ -169,17 +126,11 @@ class IsaacSim(Interface):
             self.articulation_view,
             self.dof_indices,
             self.joint_indices,
-            self.joint_vel_addrs,
             self.prim_path,
         )
 
         if self.robot_config.robot_type.startswith("h1"):
-            self.world.add_physics_callback("send_actions", self.send_actions)
-
-            
-
-        
-
+            self.world.add_physics_callback("keep_standing", self.keep_standing)
 
 
     def disconnect(self):
@@ -187,77 +138,18 @@ class IsaacSim(Interface):
         self.simulation_app.close() # close Isaac Sim
         print("IsaacSim connection closed...")
 
-    '''
-    def send_forces(self, u):
-        """Applies the torques u to the joints specified in indices."""
-        
-        # Debug: Check array sizes and indices
-        print(f"=== SEND_FORCES DEBUG ===")
-        print(f"robot_config.N_ALL_JOINTS: {self.robot_config.N_ALL_JOINTS}")
-        print(f"articulation_view joint count: {len(self.articulation_view.joint_names)}")
-        print(f"joint_pos_addrs: {self.joint_pos_addrs}")
-        print(f"u shape: {u.shape}")
-        print(f"Max index in joint_pos_addrs: {max(self.joint_pos_addrs) if self.joint_pos_addrs else 'None'}")
-        
-        # Use the correct joint count for the articulation view
-        total_joints = len(self.articulation_view.joint_names)  # Should be 24
-        full_torques = np.zeros(total_joints)
-        
-        # Apply control torques to the controlled joints
-        full_torques[self.joint_pos_addrs] = u
-        
-        print(f"full_torques shape: {full_torques.shape}")
-        print(f"Non-zero torques at indices: {np.nonzero(full_torques)[0]}")
-        
-        # Apply the control signal
-        self.articulation_view.set_joint_efforts(full_torques)
-        
-        # Move simulation ahead one time step
-        self.world.step(render=True)
-        '''
-
-
-
-    def debug_dof_mapping(self):
-        print("=== DOF MAPPING DEBUG ===")
-        print(f"robot_config.N_ALL_JOINTS: {self.robot_config.N_ALL_JOINTS}")
-        print(f"articulation.dof_names length: {len(self.articulation.dof_names)}")
-        print(f"articulation_view.dof_names length: {len(self.articulation_view.dof_names)}")
-        print(f"articulation_view.joint_names length: {len(self.articulation_view.joint_names)}")
-        
-        print("\nDOF names (actuated joints):")
-        dof_names = self.articulation.dof_names
-        for i, name in enumerate(dof_names):
-            print(f"  {i}: {name}")
-        
-        print("\nLooking for controlled joints in DOF names:")
-        for joint_name in self.robot_config.controlled_dof:
-            if joint_name in dof_names:
-                idx = dof_names.index(joint_name)
-                print(f"  {joint_name}: DOF index {idx}")
-            else:
-                print(f"  {joint_name}: NOT FOUND in DOF names!")
-
-
     
     def send_forces(self, u):
         """Applies the torques u to the joints specified in indices."""
-        #print ("send forces")
         # Create full torque vector for all DOFs
         full_torques = np.zeros(self.robot_config.N_ALL_DOF)
         # Apply control torques to the controlled joints
-        full_torques[self.dof_indices] = u
+        full_torques[self.dof_indices] = u 
         # Apply the control signal
-        #TODO maybe outsource as done for position
         self.articulation_view.set_joint_efforts(full_torques)
         # Move simulation ahead one time step
         self.world.step(render=True)
     
-
-
-
-
-       
 
     def send_target_angles(self, q):
         """Moves the arm to the specified joint angles
@@ -271,54 +163,15 @@ class IsaacSim(Interface):
 
     def get_feedback(self):
         """Return a dictionary of information needed by the controller.
-
         Returns the joint angles and joint velocities in [rad] and [rad/sec],
         respectively
         """
         self.q = self.robot_config.get_joint_positions()
         self.dq = self.robot_config.get_joint_velocities()
         return {"q": self.q, "dq": self.dq}
-
-
-    def get_xyz(self, prim_path):
-                """Returns the xyz position of the specified object
-
-                prim_path : string
-                    path of the object you want the xyz position of
-                """
-                transform_matrix = self.get_transform(prim_path)
-                translation = transform_matrix.ExtractTranslation()
-                return np.array([translation[0], translation[1], translation[2]], dtype=np.float64)
-
-
-    #TODO check if overlap to def quaternion
-    def get_orientation(self, prim_path):
-        """Returns the orientation of an object in IsaacSim
-        Parameters
-        ----------
-        name : string
-            the name of the object of interest
-        """
-        transform_matrix = self.get_transform(prim_path)
-        quat = transform_matrix.ExtractRotationQuat()
-        quat_np = np.array([quat.GetReal(), *quat.GetImaginary()])
-        return quat_np
     
-
-    def get_transform(self, prim_path):
-        _cube =  self.stage.GetPrimAtPath(prim_path)
-        # Check if it's an Xformable
-        if not _cube.IsValid() or not UsdGeom.Xformable(_cube):
-            print(f"Prim at {_cube.GetPath()} is not a valid Xformable.")
-        else:
-            xformable = UsdGeom.Xformable(_cube)
-        # Get the local transformation matrix
-        transform_matrix = xformable.GetLocalTransformation()
-
-        return transform_matrix
-
-
-    def set_xyz(self, prim_path, xyz, orientation=np.array([0., 0., 0., 1.])):
+    
+    def set_xyz(self, prim_path, xyz):
         """Set the position of an object in the environment.
 
         prim_path : string
@@ -326,36 +179,25 @@ class IsaacSim(Interface):
         xyz : np.array
             the [x,y,z] location of the target [meters]
         """     
-        _cube =  self.stage.GetPrimAtPath(prim_path)
-        xformable = UsdGeom.Xformable(_cube)
+        prim =  self.stage.GetPrimAtPath(prim_path)
+        xformable = UsdGeom.Xformable(prim)
         transform_matrix = Gf.Matrix4d().SetTranslate(Gf.Vec3d(xyz[0], xyz[1], xyz[2]))
         xformable.MakeMatrixXform().Set(transform_matrix)
+    
 
-
-    # method for keep_standing
-    def send_actions(self, dt):
-        pelvis_prim_path = '/World/robot/pelvis'  
-        prim = self.stage.GetPrimAtPath(pelvis_prim_path)
+    # method that humanoid does not fall over
+    def keep_standing(self, dt):
+        prim = self.stage.GetPrimAtPath(self.robot_config.lock_prim_standing)
         prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0, 0.0, 0.0, 0.0))
         prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0, 0.0, 1.4))
-        #prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(0.70711 ,0.70711 ,0.0 ,0.0))
-
-    
    
 
-    #TODO check if position is even set here. maybe remove
     # Create a visual-only cube (no collision)
-    def create_target_prim(self, prim_path="/World/target_cube", position=np.array([0, 0, 1.0]), size = .1, color=np.array([0, 0, 1.0])):        
+    def create_target_prim(self, prim_path="/World/target", size = .1, color=np.array([0, 0, 1.0])):        
         # Create cube geometry
         cube_prim = UsdGeom.Cube.Define(self.stage, prim_path)
-        cube_prim.CreateSizeAttr(size)  # Unit cube
+        cube_prim.CreateSizeAttr(size)  
         
-        # Set transform (position and scale)
-        xformable = UsdGeom.Xformable(cube_prim)
-        transform_matrix = Gf.Matrix4d().SetTranslate(Gf.Vec3d(position[0], position[1], position[2]))
-        xformable.MakeMatrixXform().Set(transform_matrix)
-        # xformable.AddTranslateOp().Set(Gf.Vec3f(*position))
-
         
         # Create and apply material for color
         material_path = prim_path + "/Material"
@@ -373,7 +215,7 @@ class IsaacSim(Interface):
         
         # Bind material to cube
         UsdShade.MaterialBindingAPI(cube_prim).Bind(material)
-        
+
         # Disable collision to ensure it's purely visual
         cube_prim.GetPrim().CreateAttribute("physics:collisionEnabled", Sdf.ValueTypeNames.Bool).Set(False)
 
@@ -383,46 +225,24 @@ class IsaacSim(Interface):
 
     def set_gains_force_control(self):
         """Properly set gains for arm joints (DOFs 0-5) and finger joints if present"""
-        
         # Get current gains or set defaults
         stiffness = np.ones(self.robot_config.N_ALL_DOF) * 100.0  # Default high stiffness
         damping = np.ones(self.robot_config.N_ALL_DOF) * 10.0     # Default damping
         
-        # Set controlled arm joints to zero stiffness for force control
+        if self.robot_config.is_fixed_base():
+            controlled_s = 0.0
+            controlled_d = 0.1
+        else:
+            controlled_s = 2.0
+            controlled_d = 0.5
+
         for idx in self.dof_indices:
-            stiffness[idx] = 0.0    # Zero stiffness = force control
-            damping[idx] = 0.1      # Low damping for responsiveness
+            stiffness[idx] = controlled_s
+            damping[idx] = controlled_d
         
-  
         self.articulation_view.set_gains(stiffness, damping)
         print(f"Set gains for force control for arm joints {self.dof_indices}")
     
-
-
-
-    def set_gains_force_control_h1(self):
-
-        self.articulation_view.switch_control_mode(
-            mode="effort",
-            joint_indices=self.dof_indices
-            )
-        
-        stiffness = np.ones(self.robot_config.N_ALL_DOF) * 100.0
-        damping = np.ones(self.robot_config.N_ALL_DOF) * 10.0
-        
-        # Use the correct DOF indices
-        for dof_idx in self.dof_indices:
-            stiffness[dof_idx] = 20.0
-            damping[dof_idx] = 5.0
-            print(f"Set gains for DOF {dof_idx}: {self.all_dof_names[dof_idx]}")
-        
-        # Reshape for ArticulationView: (M, K)
-        stiffness = np.expand_dims(stiffness, axis=0)
-        damping = np.expand_dims(damping, axis=0)
-
-        self.articulation_view.set_gains(stiffness, damping)
-
-
 
 
     def add_virtual_ee_link(self, EE_parent_link, ee_name, offset=[-0.04, 0, 0]):
@@ -440,51 +260,3 @@ class IsaacSim(Interface):
         ee_prim.AddTranslateOp().Set(Gf.Vec3d(*offset))
 
         print(f"Created virtual EE link at {ee_prim_path}")
-
-
-    def debug_target_and_joints(self):
-        """Debug target movement and controlled joint response"""
-        
-        target_pos = self.get_xyz("/World/target")
-
-        # Target movement
-        if self.prev_target is not None:
-            target_change = target_pos - self.prev_target
-            target_change_mag = np.linalg.norm(target_change)
-            if target_change_mag > 0.01:
-                print(f"Target moved: {target_change} (mag: {target_change_mag:.4f})")
-        
-        # Get current joint positions
-        joint_positions = self.articulation_view.get_joint_positions()
-        joint_velocities = self.articulation_view.get_joint_velocities()
-        
-        current_joints = []
-        for idx in self.dof_indices:
-            pos = joint_positions[0, idx] if joint_positions.ndim > 1 else joint_positions[idx]
-            current_joints.append(pos)
-        current_joints = np.array(current_joints)
-        
-        # Joint movements
-        if self.prev_joints is not None:
-            joint_changes = current_joints - self.prev_joints
-            if target_change_mag > 0.01:
-                print("Joint Changes:")
-            dof_names = self.articulation.dof_names
-            for i, idx in enumerate(self.dof_indices):
-                joint_name = dof_names[idx].replace('_joint', '').replace('right_', '')
-                pos_change_deg = joint_changes[i] * 180 / 3.14159
-                vel = joint_velocities[0, idx] if joint_velocities.ndim > 1 else joint_velocities[idx]
-                if target_change_mag > 0.01:
-                    print(f"  {joint_name}: {joint_changes[i]:.4f}rad ({pos_change_deg:.2f}°) vel:{vel:.3f}")
-        else:
-            print("Initial joint positions:")
-            dof_names = self.articulation.dof_names
-            for i, idx in enumerate(self.dof_indices):
-                joint_name = dof_names[idx].replace('_joint', '').replace('right_', '')
-                pos_deg = current_joints[i] * 180 / 3.14159
-                print(f"  {joint_name}: {current_joints[i]:.4f}rad ({pos_deg:.2f}°)")
-        
-        # Store for next comparison
-        self.prev_target = target_pos.copy()
-        self.prev_joints = current_joints.copy()
-

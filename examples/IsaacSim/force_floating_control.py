@@ -16,21 +16,20 @@ if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
     arm_model = "h1_hands"
-    #arm_model = "ur5"
-# initialize our robot config
+    #arm_model = "jaco2"
 robot_config = arm(arm_model)
-# create the IsaacSim interface and connect up
 interface = IsaacSim(robot_config, dt = 0.007)
-interface.connect(joint_names=[f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))])
+interface.connect(joint_names=robot_config.controlled_dof)
+
+
+
 interface.send_target_angles(robot_config.START_ANGLES)
 interface.set_gains_force_control()
-
 
 # instantiate the controller
 ctrlr = Floating(robot_config, task_space=False, dynamic=True)
 
 # set up arrays for tracking end-effector and target position
-
 ee_track = []
 q_track = []
 

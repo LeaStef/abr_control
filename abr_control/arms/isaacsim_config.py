@@ -34,7 +34,7 @@ class IsaacsimConfig:
 
 
 
-    def __init__(self, robot_type, folder=None, use_sim_state=True, force_download=False):
+    def __init__(self, robot_type):
         """Loads the Isaacsim model from the specified xml file
 
         Parameters
@@ -70,14 +70,9 @@ class IsaacsimConfig:
         """
 
         self.robot_type = robot_type
-        #TODO obsolete, from mujoco
-        self.use_sim_state = use_sim_state
-         
-        self.robot_path = None
         self.ee_link_name = "EE"  # name used for virtual end-effector, overwritten if one exists already
         
         if self.robot_type == "ur5":
-            #self.ctrlr_dof = [True, True, True, False, False, False]
             self.robot_path = "/Isaac/Robots/UniversalRobots/ur5/ur5.usd"
             self.has_EE = False  # UR5 has no end-effector
             self.EE_parent_link = "wrist_3_link"  
@@ -87,7 +82,6 @@ class IsaacsimConfig:
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "jaco2":
-            #self.ctrlr_dof = [True, True, True, False, False, False]
             self.robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
             self.has_EE = True  # jaco2 has an end-effector
             self.ee_link_name = "j2n6s300_end_effector"  
@@ -97,7 +91,6 @@ class IsaacsimConfig:
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
                 
         elif self.robot_type == "h1":   
-            #self.ctrlr_dof = [True, True, True, False]
             self.robot_path = "/Isaac/Robots/Unitree/H1/h1.usd"
             self.has_EE = False  # H1 has no end-effector
             self.EE_parent_link = "right_elbow_link"
@@ -105,11 +98,10 @@ class IsaacsimConfig:
             START_ANGLES = "0. 0. 0. 0."
             self.target_min = np.array([0.1, -0.55, 1.4])
             self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
-
+            self.lock_prim_standing = '/World/robot/pelvis'
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached as robot has none.")
 
         elif self.robot_type == "h1_hands":  
-            #self.ctrlr_dof = [True, True, True, False, False]
             self.robot_path = "/Isaac/Robots/Unitree/H1/h1_with_hand.usd"
             self.has_EE = True  # H1 with hands has an end-effector
             #self.EE_parent_link = "right_elbow_link"
@@ -117,15 +109,14 @@ class IsaacsimConfig:
             START_ANGLES = "0. 0. 0. 0. 0."
             self.target_min = np.array([0.1, -0.55, 1.4])
             self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
+            self.lock_prim_standing = '/World/robot/pelvis'
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
-
-        
 
         self.START_ANGLES = np.array(START_ANGLES.split(), dtype=float)
 
         
 
-    def _connect(self, world, stage, articulation, articulation_view, dof_indices, joint_indices, joint_vel_addrs, prim_path):
+    def _connect(self, world, stage, articulation, articulation_view, dof_indices, joint_indices, prim_path):
 
         """Called by the interface once the Mujoco simulation is created,
         this connects the config to the simulator so it can access the
@@ -138,9 +129,7 @@ class IsaacsimConfig:
         dof_indices: np.array of ints
             The index of the robot joints in the Mujoco simulation data joint
             position array
-        joint_vel_addrs: np.array of ints
-            The index of the robot joints in the Mujoco simulation data joint
-            Jacobian, inertia matrix, and gravity vector
+     
         """
 
         # get access to the Isaac simulation
@@ -150,22 +139,21 @@ class IsaacsimConfig:
         self.articulation_view = articulation_view
         self.dof_indices = np.copy(dof_indices)
         self.joint_indices = np.copy(joint_indices)
-        self.joint_vel_addrs = np.copy(joint_vel_addrs)
         self.prim_path = prim_path
         self.N_JOINTS = len(self.dof_indices)
         self.N_ALL_DOF = self.articulation_view.num_dof
         self.N_ALL_JOINTS = self.articulation_view.num_joints
+        # offset for non-fixed articulation base (mobile robots), necessary for indexing jacobian matrices etc correctly
+        self.base_offset = 6 if not self.is_fixed_base() else 0
 
-        # need to calculate the joint_vel_addrs indices in flat vectors returned
-        # for the Jacobian
         self.jac_indices = np.hstack(
             # 6 because position and rotation Jacobians are 3 x N_JOINTS
-            [self.joint_vel_addrs + (ii * self.N_ALL_JOINTS) for ii in range(3)]
+            [self.dof_indices + (ii * self.N_ALL_DOF) for ii in range(3)]
         )
 
         # for the inertia matrix
         self.M_indices = [
-            ii * self.N_ALL_JOINTS + jj
+            ii * self.N_ALL_DOF + jj
             for jj in self.dof_indices
             for ii in self.dof_indices
         ]
@@ -175,36 +163,23 @@ class IsaacsimConfig:
         self._J3NP = np.zeros((3, self.N_ALL_JOINTS))
         self._J3NR = np.zeros((3, self.N_ALL_JOINTS))
         self._J6N = np.zeros((6, self.N_JOINTS))
-        self._MNN = np.zeros((self.N_ALL_JOINTS, self.N_ALL_JOINTS))
+        self._MNN = np.zeros((self.N_ALL_DOF, self.N_ALL_DOF))
         self._R9 = np.zeros(9)
         self._R = np.zeros((3, 3))
         self._x = np.ones(4)
 
-    '''
+
+    # works but gets bumpy when out of reach and weird for higher targets
     def g(self, q=None):
-        g_full = self.articulation_view.get_generalized_gravity_forces()[0]
-        return -g_full[self.dof_indices]
-    '''
+   
+        full_gravity = self.articulation_view.get_generalized_gravity_forces()[0]
+        # Drop the first 6 base DOFs for floating-base robots
+        joint_gravity = full_gravity[6:]
 
+        #return joint_gravity[self.dof_indices]
 
-    def g(self, q=None):
-        """
-        Returns the gravity and Coriolis/centrifugal forces for the controlled arm_joints.
-        Args:
-            q (np.ndarray, optional): Joint positions
-        Returns:
-            np.ndarray: Generalized bias forces for controlled DOF
-        """
-        # Compute gravity and Coriolis/centrifugal separately
-        gravity = self.articulation_view.get_generalized_gravity_forces(joint_indices=self.dof_indices)[0]
-        #coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.dof_indices)[0]
-        #g = gravity + coriolis
-
-        return -gravity
-        #return -g          
-       
-    
-        
+        return np.zeros(len(self.dof_indices))  # No gravity compensation in this example
+  
 
     def dJ(self, name, q=None, dq=None, x=None):
         """Returns the derivative of the Jacobian wrt to time
@@ -222,12 +197,7 @@ class IsaacsimConfig:
         x: float numpy.array, optional (Default: None)
         """
         # TODO if ever required
-        # Note from Emo in Mujoco forums:
-        # 'You would have to use a finate-difference approximation in the
-        # general case, check differences.cpp'
         raise NotImplementedError
-
-
 
 
     def J(self, name, q=None, x=None,  object_type="body"):
@@ -236,9 +206,6 @@ class IsaacsimConfig:
             if jacobians.shape[0] == 0:
                 raise RuntimeError("ArticulationView contains no environments. Make sure it's properly initialized and contains articulations.")
 
-            print("###################################")
-            print("jacobians shape: ", jacobians.shape)
-            print("###################################")
             # TODO this could be fixed by attachind virtual EE
             if self.robot_type is "ur5":
                 link_index = 5
@@ -253,28 +220,16 @@ class IsaacsimConfig:
                 #link_index = 20
                 link_index = 25
 
-
             env_idx = 0  # Assuming single environment
             J_full = jacobians[env_idx, link_index, :, :]
             if len(jacobians.shape) == 4:
-                # Fixed articulation base (robotic manipulators): (env, num_bodies - 1, 6, num_dof)
-                if self.is_fixed_base():
-                    jacobian_columns = self.dof_indices
-                    
-                # Non-fixed articulation base (mobile robots): (env, num_bodies, 6, num_dof + base_dofs)
-                else:
-                    jacobian_base_offset = 2  # Empirically determined for H1
-                    jacobian_columns = self.dof_indices + jacobian_base_offset
-                   
+                # apply offset for non-fixed articulation base (mobile robots
+                indices = self.dof_indices + self.base_offset
+                # Extract only the columns for controllable DOFs 
+                J = J_full[:, indices]
             else:
                 raise RuntimeError(f"Unexpected jacobians shape: {jacobians.shape}")
-        
             
-            
-            # Extract only the columns for controllable DOFs 
-            # This gives us the end-effector Jacobian w.r.t. only the right arm joints
-            J = J_full[:, jacobian_columns]
-        
             # Assign to internal storage
             # Linear velocity Jacobian (first 3 rows)
             self._J6N[:3, :] = J[:3, :]
@@ -301,11 +256,12 @@ class IsaacsimConfig:
         """
         # get_mass_matrices returns (num_envs, joint_count, joint_count)
         self._MNN= self.articulation_view.get_mass_matrices()[0]
-        # extract only the controlled joints
-        M = self._MNN[np.ix_(self.joint_indices, self.joint_indices)]
-        return np.copy(M)
+        # apply offset for non-fixed articulation base (mobile robots)
+        indices = self.dof_indices + self.base_offset
+        M = self._MNN[np.ix_(indices, indices)]
+        return M
 
-
+        
     def R(self, name, q=None, object_type="body"):
         """
         Returns the rotation matrix of the specified object in Isaac Sim.
@@ -366,19 +322,13 @@ class IsaacsimConfig:
         # Get 4x4 world transform matrix
         matrix = omni.usd.get_world_transform_matrix(prim)
         quat = matrix.ExtractRotationQuat()  
-
-        # Convert to [w, x, y, z] NumPy array 
         quat_np = np.array([quat.GetReal(), *quat.GetImaginary()])
       
         return quat_np
 
 
-    def C(self, q=None, dq=None):
-        """NOTE: The Coriolis and centrifugal effects (and gravity) are
-        already accounted for by Mujoco in the qfrc_bias variable. There's
-        no easy way to separate these, so all are returned by the g function.
-        To prevent accounting for these effects twice, this function will
-        return an error instead of qfrc_bias again.
+    def C(self):
+        """NOTE: The Coriolis and centrifugal effects are neglected atm, as this method is not called anywhere
         """
         coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.dof_indices)[0]
         return coriolis
@@ -421,6 +371,38 @@ class IsaacsimConfig:
         position = matrix.ExtractTranslation()
 
         return np.array([position[0], position[1], position[2]], dtype=np.float64)
+    
+    '''
+    def get_xyz(self, prim_path):
+                """Returns the xyz position of the specified object
+
+                prim_path : string
+                    path of the object you want the xyz position of
+                """
+                transform_matrix = self.get_transform(prim_path)
+                translation = transform_matrix.ExtractTranslation()
+                return np.array([translation[0], translation[1], translation[2]], dtype=np.float64)
+
+   
+    
+    # TODO check if necessary
+    def get_transform(self, prim_path):
+        _cube =  self.stage.GetPrimAtPath(prim_path)
+        # Check if it's an Xformable
+        if not _cube.IsValid() or not UsdGeom.Xformable(_cube):
+            print(f"Prim at {_cube.GetPath()} is not a valid Xformable.")
+        else:
+            xformable = UsdGeom.Xformable(_cube)
+        # Get the local transformation matrix
+        transform_matrix = xformable.GetLocalTransformation()
+
+        return transform_matrix
+
+    '''
+
+
+
+
 
 
     def T_inv(self, name, q=None, x=None):
@@ -448,37 +430,23 @@ class IsaacsimConfig:
                 return prim.GetPath()
         return None
             
-
     def get_joint_positions(self):
-        """Get current joint positions"""
-        if hasattr(self, 'articulation'):
-            all_positions = self.articulation.get_joint_positions()
-            return all_positions[self.dof_indices]
-        return None
-
+        all_positions = self.articulation.get_joint_positions()
+        return all_positions[self.dof_indices]
+    
     def get_joint_velocities(self):
-        """Get current joint velocities"""
-        if hasattr(self, 'articulation'):
-            all_velocities = self.articulation.get_joint_velocities()
-            return all_velocities[self.joint_vel_addrs]
-        return None
- 
+        all_velocities = self.articulation.get_joint_velocities()
+        return all_velocities[self.dof_indices]
 
     def set_joint_positions(self, q):
-        """Set joint positions"""
-        if hasattr(self, 'articulation'):
-            full_positions = self.articulation.get_joint_positions()
-            full_positions[self.dof_indices] = q
-            self.articulation.set_joint_positions(full_positions)
+        full_positions = self.articulation.get_joint_positions()
+        full_positions[self.dof_indices] = q
+        self.articulation.set_joint_positions(full_positions)
     
-
     def set_joint_velocities(self, dq):
-        """Set joint velocities"""
-        if hasattr(self, 'articulation'):
-            full_velocities = self.articulation.get_joint_velocities()
-            full_velocities[self.joint_vel_addrs] = dq
-            self.articulation.set_joint_velocities(full_velocities)
-
+        full_velocities = self.articulation.get_joint_velocities()
+        full_velocities[self.dof_indices] = dq
+        self.articulation.set_joint_velocities(full_velocities)
 
     def is_fixed_base(self):
         num_dof = self.articulation_view.num_dof

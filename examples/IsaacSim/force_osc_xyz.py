@@ -10,14 +10,12 @@ from abr_control.arms.isaacsim_config import IsaacsimConfig as arm
 from abr_control.controllers import OSC, Damping
 from abr_control.interfaces.nv_isaacsim import IsaacSim
 from abr_control.utils import transformations
-import time
-last_time = time.time()
 
 
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "h1"
+    arm_model = "ur5"
 robot_config = arm(arm_model)
 
 dt = 0.007  # 143 Hz 
@@ -27,17 +25,20 @@ target_prim_path="/World/target"
 # create our IsaacSim interface
 interface = IsaacSim(robot_config, dt=dt)
 
-#joint_names = [f"joint{ii}" for ii in range(len(robot_config.START_ANGLES))]
-#interface.connect(joint_names=robot_config.controlled_joints)
+#interface.connect(joint_names=robot_config.controlled_dof)
 interface.connect()
 
 
 interface.send_target_angles(robot_config.START_ANGLES)
 isaac_target = interface.create_target_prim(prim_path=target_prim_path)
 
+interface.set_gains_force_control()
 
-#interface.set_gains_force_control()
-interface.set_gains_force_control_h1()
+# disable gravity
+interface.articulation_view.set_body_disable_gravity(True)
+gravity = interface.articulation_view.get_body_disable_gravity()[0]
+print("Gravity disabled: ", gravity)    
+
 
 # damp the movements of the arm
 damping = Damping(robot_config, kv=30)  #kv=10)
@@ -47,16 +48,13 @@ ctrlr = OSC(
     kp= 300, # 200
     null_controllers=[damping],
     vmax=[0.5, 0],  # [m/s, rad/s]
-    # control (x, y, z) out of [x, y, z, alpha, beta, gamma]
     ctrlr_dof= [True, True, True, False, False, False]
-    #ctrlr_dof= robot_config.ctrlr_dof
 )
 
 # set up lists for tracking data
 ee_track = []
 target_track = []
 
-#target_geom = "target"
 green = [0, 0.9, 0, 0.5]
 red = [0.9, 0, 0, 0.5]
 
@@ -67,11 +65,6 @@ def gen_target(interface):
     target_range = np.array([1, 1, 0.5])
     target_xyz = (target_min + np.random.rand(3)) * target_range
     interface.set_xyz(target_prim_path, target_xyz)
-
-
-
-interface.debug_dof_mapping()
-
 
 
 try:
@@ -85,18 +78,13 @@ try:
     count = 0
     print("\nSimulation starting...\n")
     while 1:
-        current_time = time.time()
-        dt = current_time - last_time
-        #print(f"Control dt: {dt:.6f}s, Freq: {1/dt:.1f}Hz")
-        last_time = current_time
-        # get joint angle and velocity feedback
+    
         feedback = interface.get_feedback()
-
         target = np.hstack(
             [
-                interface.get_xyz(target_prim_path),
+                robot_config.Tx(target_prim_path),
                 transformations.euler_from_quaternion(
-                    interface.get_orientation(target_prim_path), "rxyz"
+                    robot_config.quaternion(target_prim_path), "rxyz"
                 ),
             ]
         )
@@ -108,10 +96,9 @@ try:
             target=target,
         )
 
-
         interface.send_forces(u)
-        # interface.world.step(render=True)
-        
+        #interface.world.step(render=True)
+
 
 
         # calculate end-effector position
