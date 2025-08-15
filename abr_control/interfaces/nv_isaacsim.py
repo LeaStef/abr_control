@@ -9,10 +9,8 @@ from omni.isaac.core import World # type: ignore
 from omni.isaac.core.articulations import ArticulationView # type: ignore
 #from isaacsim.core.prims import Articulation # type: ignore
 from isaacsim.core.api.robots import Robot # type: ignore
-
 from pxr import UsdGeom, Gf, UsdShade, Sdf # type: ignore
 from isaacsim.core.utils.nucleus import get_assets_root_path # type: ignore
-from isaacsim.robot.policy.examples.robots import H1FlatTerrainPolicy # type: ignore
 import isaacsim.core.utils.numpy.rotations as rot_utils  # type: ignore
 
 
@@ -56,22 +54,12 @@ class IsaacSim(Interface):
         robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
         print(f"Robot '{self.robot_config.robot_type}' is loaded from USD path: {robot_usd_path}")
         
-        if self.robot_config.robot_type.startswith("h1"):
-            self.h1 = H1FlatTerrainPolicy(
-                prim_path=self.prim_path,
-                name=self.robot_config.robot_type,
-                usd_path=robot_usd_path,
-                position=np.array([0, 0 , 0]),
-                orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, 0]), degrees=True),
+        stage_utils.add_reference_to_stage(
+            usd_path=robot_usd_path,
+            prim_path=self.prim_path,
             )
-
-        else:    
-            stage_utils.add_reference_to_stage(
-                    usd_path=robot_usd_path,
-                    prim_path=self.prim_path,
-                    )
-            robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.robot_config.robot_type))
-
+        robot = self.world.scene.add(Robot(prim_path=self.prim_path, name=self.robot_config.robot_type))
+      
         self.world.reset()
         
         self.articulation_view = ArticulationView(prim_paths_expr=self.prim_path, name=self.robot_config.robot_type + "_view")
@@ -92,7 +80,6 @@ class IsaacSim(Interface):
         # Get joint information
         self.dof_indices = []
         self.joint_indices = []
-        self.joint_dyn_addrs = []
         
         if joint_names is None:
             print("No joint names provided, using all controllable joints.")
@@ -150,7 +137,7 @@ class IsaacSim(Interface):
         q : numpy.array
                 the target joint angles [radians]
         """
-        self.robot_config.set_joint_positions(q)
+        self.robot_config._set_joint_positions(q)
         self.world.step(render=True)
 
 
@@ -159,8 +146,8 @@ class IsaacSim(Interface):
         Returns the joint angles and joint velocities in [rad] and [rad/sec],
         respectively
         """
-        self.q = self.robot_config.get_joint_positions()
-        self.dq = self.robot_config.get_joint_velocities()
+        self.q = self.robot_config._get_joint_positions()
+        self.dq = self.robot_config._get_joint_velocities()
         return {"q": self.q, "dq": self.dq}
     
     
@@ -218,7 +205,7 @@ class IsaacSim(Interface):
         stiffness = np.ones(self.robot_config.N_ALL_DOF) * 100.0  # Default high stiffness
         damping = np.ones(self.robot_config.N_ALL_DOF) * 10.0     # Default damping
         
-        if self.robot_config.is_fixed_base():
+        if self.robot_config._is_fixed_base():
             controlled_s = 0.0
             controlled_d = 0.1
         else:

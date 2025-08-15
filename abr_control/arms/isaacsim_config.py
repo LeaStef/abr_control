@@ -86,6 +86,7 @@ class IsaacsimConfig:
         elif self.robot_type == "jaco2":
             self.robot_path = "/Isaac/Robots/Kinova/Jaco2/J2N6S300/j2n6s300_instanceable.usd"
             self.has_EE = True  # jaco2 has an end-effector
+            self.EE_parent_link = "j2n6s300_link_6"  
             self.ee_link_name = "j2n6s300_end_effector"  
             START_ANGLES = "2.0 3.14 1.57 4.71 0.0 3.04"
             self.target_min = np.array([-0.5, -0.5, 0.5])
@@ -99,12 +100,11 @@ class IsaacsimConfig:
             self.EE_parent_link = "right_elbow_link"
             self.ee_offset=[0.26455, 0.00118, -0.0209] # for H1 
             START_ANGLES = "0. 0. 0. 0."
-            # self.target_min = np.array([0.1, -0.5, 1.4])
-            self.target_min = np.array([0.12, -0.4, 1.3])
+            self.target_min = np.array([0.12, -0.4, 1.4])
             self.target_range = np.array([
                 0.4 - 0.12,  # x range
-                0.12 - (-0.4), # y range
-                2.2 - 1.3     # z range
+                0.05 - (-0.4), # y range
+                2.2 - 1.4     # z range
             ])
             self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
             self.lock_prim_standing = '/World/robot/pelvis'
@@ -113,15 +113,14 @@ class IsaacsimConfig:
         elif self.robot_type == "h1_hands":  
             self.robot_path = "/Isaac/Robots/Unitree/H1/h1_with_hand.usd"
             self.has_EE = True  # H1 with hands has an end-effector
-            #self.EE_parent_link = "right_elbow_link"
+            self.EE_parent_link = "right_elbow_link"
             self.ee_link_name = "right_hand_link"  
             START_ANGLES = "0. 0. 0. 0. 0."
-            # self.target_min = np.array([0.1, -0.55, 1.4])
-            self.target_min = np.array([0.12, -0.4, 1.3])
+            self.target_min = np.array([0.12, -0.4, 1.4])
             self.target_range = np.array([
                 0.49 - 0.12,  # x range
-                0.12 - (-0.4), # y range
-                2.2 - 1.3     # z range
+                0.05 - (-0.4), # y range
+                2.2 - 1.4     # z range
             ])
             self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
             self.lock_prim_standing = '/World/robot/pelvis'
@@ -158,7 +157,7 @@ class IsaacsimConfig:
         self.N_ALL_DOF = self.articulation_view.num_dof
         self.N_ALL_JOINTS = self.articulation_view.num_joints
         # offset for non-fixed base (mobile robots), necessary for indexing jacobian matrices etc correctly
-        self.base_offset = 6 if not self.is_fixed_base() else 0
+        self.base_offset = 6 if not self._is_fixed_base() else 0
 
         self.jac_indices = np.hstack(
             # 6 because position and rotation Jacobians are 3 x N_JOINTS
@@ -183,17 +182,14 @@ class IsaacsimConfig:
         self._x = np.ones(4)
 
 
-    # works but gets bumpy when out of reach and weird for higher targets
     def g(self, q=None):
-   
         full_gravity = self.articulation_view.get_generalized_gravity_forces()[0]
         # Drop the first 6 base DOFs for floating-base robots
-        joint_gravity = full_gravity[6:]
-
-        #return joint_gravity[self.dof_indices]
-
-        return np.zeros(len(self.dof_indices))  # No gravity compensation in this example
-  
+        joint_gravity = full_gravity[self.base_offset:]
+        # for some reason gravity is inverted for fixed_base
+        sign = -1 if self._is_fixed_base() else 1
+        return sign * joint_gravity [self.dof_indices]
+    
 
     def dJ(self, name, q=None, dq=None, x=None):
         """Returns the derivative of the Jacobian wrt to time
@@ -219,22 +215,11 @@ class IsaacsimConfig:
         if jacobians.shape[0] == 0:
             raise RuntimeError("ArticulationView contains no environments.")
 
-        # TODO this could be fixed by attachind virtual EE
-        if self.robot_type is "ur5":
-            link_index = 5
-        elif self.robot_type is "jaco2":
-            link_index = 5
-            #  [6, 10, 14, 18]
-        elif self.robot_type is "h1":
-        #link_index = 18
-            link_index = 24
-        #  [6, 10, 14, 18, 20]
-        elif self.robot_type is "h1_hands":
-            #link_index = 20
-            link_index = 25
-
+        offset = 0 if not self._is_fixed_base() else -1
+        body_index = self.articulation_view.get_body_index(self.EE_parent_link) + offset
+      
         env_idx = 0  # Assuming single environment
-        J_full = jacobians[env_idx, link_index, :, :]
+        J_full = jacobians[env_idx, body_index, :, :]
         if len(jacobians.shape) == 4:
             # apply offset for non-fixed base (mobile robots)
             indices = self.dof_indices + self.base_offset
@@ -243,13 +228,11 @@ class IsaacsimConfig:
         else:
             raise RuntimeError(f"Unexpected jacobians shape: {jacobians.shape}")
             
-        # Assign to internal storage
         # Linear velocity Jacobian (first 3 rows)
         self._J6N[:3, :] = J[:3, :]
         # Angular velocity Jacobian (last 3 rows)  
         self._J6N[3:, :] = J[3:, :]
             
-        # Additional validation - check if Jacobian makes sense (non-zero values)
         if np.allclose(J, 0):
             raise RuntimeError("Jacobian is all zeros - check robot configuration and joint addresses")
         
@@ -376,34 +359,31 @@ class IsaacsimConfig:
         raise NotImplementedError
     
 
-    # HELPER FUNCTIONS
-    # get the prim path for the name of the link, joint, or site
     def _get_prim_path(self, name):
         for prim in self.stage.Traverse():
-            #TODO could be more general to inlcude TCP etc
             if str(prim.GetPath()).endswith(name):
                 return prim.GetPath()
         return None
             
-    def get_joint_positions(self):
+    def _get_joint_positions(self):
         full_positions = self.articulation_view.get_joint_positions()[0]
         return full_positions[self.dof_indices]
     
-    def get_joint_velocities(self):
+    def _get_joint_velocities(self):
         full_velocities = self.articulation_view.get_joint_velocities()[0]
         return full_velocities[self.dof_indices]
 
-    def set_joint_positions(self, q):
+    def _set_joint_positions(self, q):
         full_positions = self.articulation_view.get_joint_positions()[0]
         full_positions[self.dof_indices] = q
         self.articulation_view.set_joint_positions(full_positions)
     
-    def set_joint_velocities(self, dq):
+    def _set_joint_velocities(self, dq):
         full_velocities = self.articulation_view.get_joint_velocities()[0]
         full_velocities[self.dof_indices] = dq
         self.articulation_view.set_joint_velocities(full_velocities)
 
-    def is_fixed_base(self):
+    def _is_fixed_base(self):
         num_dof = self.articulation_view.num_dof
         jacobian_shape = self.articulation_view.get_jacobian_shape()[2]
         return num_dof == jacobian_shape

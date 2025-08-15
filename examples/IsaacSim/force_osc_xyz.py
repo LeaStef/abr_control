@@ -15,7 +15,7 @@ from abr_control.utils import transformations
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "ur5"
+    arm_model = "h1_hands" # "h1_hands" / "h1" / jaco2 / ur5
 robot_config = arm(arm_model)
 
 dt = 0.007  # 143 Hz 
@@ -24,21 +24,15 @@ target_prim_path="/World/target"
 
 # create our IsaacSim interface
 interface = IsaacSim(robot_config, dt=dt)
-
-#interface.connect(joint_names=robot_config.controlled_dof)
 interface.connect()
-
-
 interface.send_target_angles(robot_config.START_ANGLES)
 isaac_target = interface.create_target_prim(prim_path=target_prim_path)
-
 interface.set_gains_force_control()
 
 # disable gravity
-interface.articulation_view.set_body_disable_gravity(True)
-gravity = interface.articulation_view.get_body_disable_gravity()[0]
-print("Gravity disabled: ", gravity)    
-
+# interface.articulation_view.set_body_disable_gravity(True)
+# gravity = interface.articulation_view.get_body_disable_gravity()[0]
+# print("Gravity disabled: ", gravity)    
 
 # damp the movements of the arm
 damping = Damping(robot_config, kv=30)  #kv=10)
@@ -62,8 +56,8 @@ np.random.seed(0)
 
 def gen_target(interface):
     target_min = robot_config.target_min
-    target_range = np.array([1, 1, 0.5])
-    target_xyz = (target_min + np.random.rand(3)) * target_range
+    target_range = robot_config.target_range
+    target_xyz = target_min + np.random.rand(3) * target_range
     interface.set_xyz(target_prim_path, target_xyz)
 
 
@@ -100,7 +94,6 @@ try:
         #interface.world.step(render=True)
 
 
-
         # calculate end-effector position
         ee_xyz = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
         # track data
@@ -108,13 +101,10 @@ try:
         target_track.append(np.copy(target[:3]))
 
         error = np.linalg.norm(ee_xyz - target[:3])
-        if error < 0.02:
-            # interface.model.geom(target_geom).rgba = green
+        if error < 0.1: #0.02:
             count += 1
         else:
             count = 0
-            # interface.model.geom(target_geom).rgba = red
-
         if count >= 50:
             print("Generating a new target")
             gen_target(interface)
