@@ -15,24 +15,17 @@ from abr_control.utils import transformations
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "h1_hands" # "h1_hands" / "h1" / jaco2 / ur5
+    arm_model = "ur5" # "h1_hands" / "h1" / jaco2 / ur5
 robot_config = arm(arm_model)
 
-dt = 0.007  # 143 Hz 
-#dt = 0.001 # 1000 Hz
-target_prim_path="/World/target"
+dt = 0.005
+target_name="target"
 
 # create our IsaacSim interface
-interface = IsaacSim(robot_config, dt=dt)
+interface = IsaacSim(robot_config, dt)
 interface.connect()
 interface.send_target_angles(robot_config.START_ANGLES)
-isaac_target = interface.create_target_prim(prim_path=target_prim_path)
-interface.set_gains_force_control()
-
-# disable gravity
-# interface.articulation_view.set_body_disable_gravity(True)
-# gravity = interface.articulation_view.get_body_disable_gravity()[0]
-# print("Gravity disabled: ", gravity)    
+isaac_target = interface.create_target_prim()
 
 # damp the movements of the arm
 damping = Damping(robot_config, kv=30)  #kv=10)
@@ -54,12 +47,6 @@ red = [0.9, 0, 0, 0.5]
 
 np.random.seed(0)
 
-def gen_target(interface):
-    target_min = robot_config.target_min
-    target_range = robot_config.target_range
-    target_xyz = target_min + np.random.rand(3) * target_range
-    interface.set_xyz(target_prim_path, target_xyz)
-
 
 try:
     # get the end-effector's initial position
@@ -67,7 +54,7 @@ try:
     start = robot_config.Tx(robot_config.ee_link_name, feedback["q"])
     
     # make the target offset from that start position
-    gen_target(interface)
+    interface.set_target_random()
 
     count = 0
     print("\nSimulation starting...\n")
@@ -76,9 +63,9 @@ try:
         feedback = interface.get_feedback()
         target = np.hstack(
             [
-                robot_config.Tx(target_prim_path),
+                robot_config.Tx(target_name),
                 transformations.euler_from_quaternion(
-                    robot_config.quaternion(target_prim_path), "rxyz"
+                    robot_config.quaternion(target_name), "rxyz"
                 ),
             ]
         )
@@ -93,7 +80,6 @@ try:
         interface.send_forces(u)
         #interface.world.step(render=True)
 
-
         # calculate end-effector position
         ee_xyz = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
         # track data
@@ -107,7 +93,7 @@ try:
             count = 0
         if count >= 50:
             print("Generating a new target")
-            gen_target(interface)
+            interface.set_target_random()
             count = 0
 
 except:

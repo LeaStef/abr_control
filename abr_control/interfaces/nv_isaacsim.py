@@ -7,9 +7,8 @@ import omni.kit.commands # type: ignore
 import isaacsim.core.utils.stage as stage_utils # type: ignore   
 from omni.isaac.core import World # type: ignore
 from omni.isaac.core.articulations import ArticulationView # type: ignore
-#from isaacsim.core.prims import Articulation # type: ignore
 from isaacsim.core.api.robots import Robot # type: ignore
-from pxr import UsdGeom, Gf, UsdShade, Sdf # type: ignore
+from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics # type: ignore
 from isaacsim.core.utils.nucleus import get_assets_root_path # type: ignore
 import isaacsim.core.utils.numpy.rotations as rot_utils  # type: ignore
 
@@ -27,7 +26,6 @@ class IsaacSim(Interface):
 
     """
     def __init__(self, robot_config, dt=0.001):
-
         super().__init__(robot_config)
         self.robot_config = robot_config
         self.dt = dt  # time step
@@ -44,7 +42,7 @@ class IsaacSim(Interface):
 
         """All initial setup."""
         # Initialize the simulation world
-        self.world = World(stage_units_in_meters=1.0)
+        self.world = World(stage_units_in_meters=1.0, physics_dt=self.dt,rendering_dt=self.dt)
         self.world.scene.add_default_ground_plane()
         self.context = omni.usd.get_context()
         self.stage = self.context.get_stage()
@@ -70,9 +68,6 @@ class IsaacSim(Interface):
         if (self.robot_config.has_EE is False):
             print("Robot has no EE, virtual one is attached.")
             self.add_virtual_ee_link(self.robot_config.EE_parent_link, self.robot_config.ee_link_name, offset=self.robot_config.ee_offset)
-
-        # Set simulation time step
-        self.world.get_physics_context().set_physics_dt(self.dt)
         
         # Reset the world to initialize physics
         self.world.reset()
@@ -90,14 +85,14 @@ class IsaacSim(Interface):
         self.all_body_names = self.articulation_view.body_names 
 
         for name in joint_names:
-            if name not in self.all_dof_names and name not in self.all_joint_names:
+            if name not in self.all_dof_names or name not in self.all_joint_names:
                 raise Exception(f"Joint name {name} does not exist in robot model")
             joint_idx = self.articulation_view.get_joint_index(name)
             dof_idx = self.articulation_view.get_dof_index(name)
             self.dof_indices.append(dof_idx)
             self.joint_indices.append(joint_idx)
            
-
+    
         # Connect robot config with simulation data
         print("Connecting to robot config...")
         self.robot_config._connect(
@@ -108,9 +103,13 @@ class IsaacSim(Interface):
             self.joint_indices,
             self.prim_path,
         )
-
-        if self.robot_config.robot_type.startswith("h1"):
+        # additional setup necessary for mobile robots (at least h1)
+        if not self.robot_config._is_fixed_base:
             self.world.add_physics_callback("keep_standing", self.keep_standing)
+            # also works without, but is more reactive if max force is adapted
+            [self.set_max_force(name=joint_name, value=0.7) for joint_name in self.robot_config.controlled_dof]
+        else:
+            self.set_gains()
 
 
     def disconnect(self):
@@ -120,7 +119,11 @@ class IsaacSim(Interface):
 
     
     def send_forces(self, u):
-        """Applies the torques u to the joints specified in indices."""
+        """Applies the torques u to the DOF specified in dof_indices.
+        
+        u : numpy.array
+                the forces to apply to the controlled DOF.
+        """
         # Create full torque vector for all DOFs
         full_torques = np.zeros(self.robot_config.N_ALL_DOF)
         # Apply control torques to the controlled joints
@@ -151,15 +154,15 @@ class IsaacSim(Interface):
         return {"q": self.q, "dq": self.dq}
     
     
-    def set_xyz(self, prim_path, xyz):
+    def set_xyz(self, name, xyz):
         """Set the position of an object in the environment.
 
         prim_path : string
-            the prim_path of the object
+            the prim_path of the prim
         xyz : np.array
             the [x,y,z] location of the target [meters]
         """     
-        prim =  self.stage.GetPrimAtPath(prim_path)
+        prim = self.robot_config._get_prim(name)
         xformable = UsdGeom.Xformable(prim)
         transform_matrix = Gf.Matrix4d().SetTranslate(Gf.Vec3d(xyz[0], xyz[1], xyz[2]))
         xformable.MakeMatrixXform().Set(transform_matrix)
@@ -195,30 +198,36 @@ class IsaacSim(Interface):
 
         # Disable collision to ensure it's purely visual
         cube_prim.GetPrim().CreateAttribute("physics:collisionEnabled", Sdf.ValueTypeNames.Bool).Set(False)
-
         return cube_prim
-
     
-    def set_gains_force_control(self):
+
+    def set_target_random(self, name="target"):
+        target_min = self.robot_config.target_min
+        target_range = self.robot_config.target_range
+        target_xyz = target_min + np.random.rand(3) * target_range
+        self.set_xyz(name, target_xyz)
+
+
+    # setting max_force via PhysX DriveAPI
+    def set_max_force(self, name, value):
+        prim = self.robot_config._get_prim(name)
+        # Apply the DriveAPI if not already present
+        driveAPI = UsdPhysics.DriveAPI.Apply(prim, "angular") # Use "linear" for prismatic joints
+        # Set the max force
+        driveAPI.CreateMaxForceAttr(value)
+
+
+    def set_gains(self):
         """Properly set gains for arm joints (DOFs 0-5) and finger joints if present"""
         # Get current gains or set defaults
         stiffness = np.ones(self.robot_config.N_ALL_DOF) * 100.0  # Default high stiffness
         damping = np.ones(self.robot_config.N_ALL_DOF) * 10.0     # Default damping
-        
-        if self.robot_config._is_fixed_base():
-            controlled_s = 0.0
-            controlled_d = 0.1
-        else:
-            controlled_s = 2.0
-            controlled_d = 0.5
-
         for idx in self.dof_indices:
-            stiffness[idx] = controlled_s
-            damping[idx] = controlled_d
+            stiffness[idx] = 0.0
+            damping[idx] = 0.1
         
         self.articulation_view.set_gains(stiffness, damping)
-        print(f"Set gains for force control for arm joints {self.dof_indices}")
-    
+
 
     def add_virtual_ee_link(self, EE_parent_link, ee_name, offset):
         """Add virtual end effector link as an Xform under the specified parent link"""

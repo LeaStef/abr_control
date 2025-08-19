@@ -3,73 +3,21 @@ import omni
 
 
 class IsaacsimConfig:
-    """A wrapper on the Mujoco simulator to generate all the kinematics and
+    """A wrapper on the IsaacSim simulator to generate all the kinematics and
     dynamics calculations necessary for controllers.
     """
-
-    # https://nvidia-omniverse.github.io/PhysX/physx/5.1.0/docs/Joints.html
-    JNT_POS_LENGTH_ISAACSIM = {
-        "free": 7,   # 3 (translation) + 4 (quaternion rotation), usually not used in articulated chains
-        "spherical": 4,  # Represented as quaternion in PxArticulationReducedCoordinate
-        "prismatic": 1,  # Linear motion in one axis
-        "revolute": 1,   # Rotational motion in one axis
-    }
-    '''
-    from omni.isaac.core.articulations import ArticulationJointType
-    JNT_POS_LENGTH = {
-        ArticulationJointType.FREE: 7,   # 3 for position + 4 for quaternion orientation
-        ArticulationJointType.BALL: 4,   # quaternion orientation
-        ArticulationJointType.PRISMATIC: 1,  # 1 DoF linear
-        ArticulationJointType.REVOLUTE: 1,   # 1 DoF rotational
-    }
-    '''
-
-    JNT_DYN_LENGTH_ISAACSIM = {
-        "free": 6,        # 3 linear + 3 angular velocity (used for root link only, not in articulated chains)
-        "spherical": 3,   # Angular velocity vector (3D)
-        "prismatic": 1,   # Linear velocity along one axis
-        "revolute": 1,    # Angular velocity around one axis
-    }
-    
-
-
 
     def __init__(self, robot_type):
         """Loads the Isaacsim model from the specified xml file
 
         Parameters
         ----------
-        xml_file: string
-            the name of the arm model to load. If folder remains as None,
-            the string passed in is parsed such that everything up to the first
-            underscore is used for the arm directory, and the full string is
-            used to load the xml within that folder.
-
-            EX: 'myArm' and 'myArm_with_gripper' will both look in the
-            'myArm' directory, however they will load myArm.xml and
-            myArm_with_gripper.xml, respectively
-
-            If a folder is passed in, then folder/xml_file is used
-        folder: string, Optional (Default: None)
-            specifies what folder to find the xml_file, if None specified will
-            checking in abr_control/arms/xml_file (see above for xml_file)
-        use_sim_state: Boolean, optional (Default: True)
-            If set False, the state information is provided by the user, which
-            is then used to calculate the corresponding dynamics values.
-            The state is then set back to the sim state prior to the user
-            provided state.
-            If set true, any q and dq values passed in to the functions are
-            ignored, and the current state of the simulator is used to
-            calculate all functions. This can speed up the simulation, because
-            the step of resetting the state on every call is omitted.
-        force_download: boolean, Optional (Default: False)
-            True to force downloading the mesh and texture files, useful when new files
-            are added that may be missing.
-            False: if the meshes folder is missing it will ask the user whether they
-            want to download them
+        robot_type: string
+            the name of the arm model to load. 
         """
 
         self.robot_type = robot_type
+        self.env_idx = 0  # Assuming only one robot
         self.ee_link_name = "EE"  # name used for virtual end-effector, overwritten if one exists already
         
         if self.robot_type == "ur5":
@@ -78,8 +26,8 @@ class IsaacsimConfig:
             self.EE_parent_link = "wrist_3_link"  
             self.ee_offset=[0., 0., 0.] 
             START_ANGLES = "0 -.67 -.67 0 0 0"
-            self.target_min = np.array([-0.5, -0.5, 0.5])
-            self.target_range = [1, 1, 0.5]
+            self.target_min = np.array([-0.6, -0.5, 0.5])
+            self.target_range = np.array([0.9, 1.1, 0.3])
             self.controlled_dof = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached, as robot has none.")
 
@@ -131,22 +79,32 @@ class IsaacsimConfig:
         
 
     def _connect(self, world, stage, articulation_view, dof_indices, joint_indices, prim_path):
-
-        """Called by the interface once the Mujoco simulation is created,
-        this connects the config to the simulator so it can access the
-        kinematics and dynamics information calculated by Mujoco.
-
-        Parameters
-        ----------
-        sim: MjSim
-            The Mujoco Simulator object created by the Mujoco Interface class
-        dof_indices: np.array of ints
-            The index of the robot joints in the Mujoco simulation data joint
-            position array
-     
-        """
-
-        # get access to the Isaac simulation
+        """Called by the interface once the IsaacSim simulation is created,
+    this connects the config to the simulator so it can access the
+    kinematics and dynamics information calculated by IsaacSim.
+    
+    Parameters
+    ----------
+    world : omni.isaac.core.World
+        The Isaac Sim World object that manages the simulation environment
+    stage : pxr.Usd.Stage
+        The USD stage containing the scene hierarchy and prims
+    articulation_view : omni.isaac.core.articulations.ArticulationView
+        The ArticulationView object that provides access to the robot's
+        kinematic and dynamic properties in Isaac Sim
+    dof_indices : np.array of ints
+        The indices of the controlled robot joints in the articulation's
+        DOF array. These correspond to the joints that will be controlled
+        and for which kinematics/dynamics will be computed.
+    joint_indices : np.array of ints
+        The indices of the controlled robot joints in the articulation's
+        joint array. Note that joint_indices and dof_indices may differ
+        due to fixed joints or different indexing schemes.
+    prim_path : str
+        The USD prim path to the robot articulation in the scene hierarchy
+        (e.g., "/World/Robot")
+    """
+        # get access to IsaacSim
         self.world = world
         self.stage = stage
         self.articulation_view = articulation_view
@@ -156,11 +114,12 @@ class IsaacsimConfig:
         self.N_JOINTS = len(self.dof_indices)
         self.N_ALL_DOF = self.articulation_view.num_dof
         self.N_ALL_JOINTS = self.articulation_view.num_joints
+        self._is_fixed_base = self._is_fixed_base() 
         # offset for non-fixed base (mobile robots), necessary for indexing jacobian matrices etc correctly
-        self.base_offset = 6 if not self._is_fixed_base() else 0
+        self.base_offset = 6 if not self._is_fixed_base else 0
 
         self.jac_indices = np.hstack(
-            # 6 because position and rotation Jacobians are 3 x N_JOINTS
+            # 6 because position and rotation Jacobians are 3 x N_ALL_DOF
             [self.dof_indices + (ii * self.N_ALL_DOF) for ii in range(3)]
         )
 
@@ -173,23 +132,29 @@ class IsaacsimConfig:
 
         # a place to store data returned from IsaacSim
         self._g = np.zeros(self.N_JOINTS)
-        self._J3NP = np.zeros((3, self.N_ALL_JOINTS))
-        self._J3NR = np.zeros((3, self.N_ALL_JOINTS))
-        self._J6N = np.zeros((6, self.N_JOINTS))
+        #self._J3NP = np.zeros((3, self.N_ALL_DOF)) # TODO
+        #self._J3NR = np.zeros((3, self.N_ALL_DOF)) # TODO
+        self._J6N = np.zeros((6, self.N_JOINTS)) 
         self._MNN = np.zeros((self.N_ALL_DOF, self.N_ALL_DOF))
-        self._R9 = np.zeros(9)
+        #self._R9 = np.zeros(9)
         self._R = np.zeros((3, 3))
-        self._x = np.ones(4)
+        #self._x = np.ones(4)
 
 
     def g(self, q=None):
-        full_gravity = self.articulation_view.get_generalized_gravity_forces()[0]
-        # Drop the first 6 base DOFs for floating-base robots
-        joint_gravity = full_gravity[self.base_offset:]
-        # for some reason gravity is inverted for fixed_base
-        sign = -1 if self._is_fixed_base() else 1
-        return sign * joint_gravity [self.dof_indices]
-    
+        """Returns gravitational forces.
+
+        Parameters
+        ----------
+        q: float numpy.array, optional (Default: None)
+            The joint angles of the robot. 
+        """
+        self._g = self.articulation_view.get_generalized_gravity_forces()[self.env_idx]
+        if self._is_fixed_base:
+            return -self._g[self.dof_indices]
+        else:
+            return np.zeros(len(self.dof_indices))
+            
 
     def dJ(self, name, q=None, dq=None, x=None):
         """Returns the derivative of the Jacobian wrt to time
@@ -197,13 +162,11 @@ class IsaacsimConfig:
         Parameters
         ----------
         name: string
-            The name of the Mujoco body to retrieve the Jacobian for
+            The name of the IsaacSim prim to retrieve the derivative of the Jacobian for
         q: float numpy.array, optional (Default: None)
-            The joint angles of the robot. If None the current state is
-            retrieved from the Mujoco simulator
+            The joint angles of the robot. 
         dq: float numpy.array, optional (Default: None)
-            The joint velocities of the robot. If None the current state is
-            retrieved from the Mujoco simulator
+            The joint velocities of the robot. 
         x: float numpy.array, optional (Default: None)
         """
         # TODO if ever required
@@ -211,15 +174,26 @@ class IsaacsimConfig:
 
 
     def J(self, name, q=None, x=None):
+        """Returns the Jacobian for the controlled DOF.
+        In case of mobile robots the floating base is accounted for by an offset.
+
+        Parameters
+        ----------
+        name: string
+            The name of the IsaacSim prim to retrieve the Jacobian for
+        q: float numpy.array, optional (Default: None)
+            The joint angles of the robot. 
+        x: float numpy.array, optional (Default: None)
+        """
         jacobians = self.articulation_view.get_jacobians(clone=True)
-        if jacobians.shape[0] == 0:
+        if jacobians.shape[self.env_idx] == 0:
             raise RuntimeError("ArticulationView contains no environments.")
 
-        offset = 0 if not self._is_fixed_base() else -1
+        offset = 0 if not self._is_fixed_base else -1
         body_index = self.articulation_view.get_body_index(self.EE_parent_link) + offset
       
-        env_idx = 0  # Assuming single environment
-        J_full = jacobians[env_idx, body_index, :, :]
+        
+        J_full = jacobians[self.env_idx, body_index, :, :]
         if len(jacobians.shape) == 4:
             # apply offset for non-fixed base (mobile robots)
             indices = self.dof_indices + self.base_offset
@@ -235,17 +209,21 @@ class IsaacsimConfig:
             
         if np.allclose(J, 0):
             raise RuntimeError("Jacobian is all zeros - check robot configuration and joint addresses")
-        
         return np.copy(self._J6N)
 
 
 
     def M(self, q=None):
-        """
-        Returns the inertia matrix for the controlled arm joints.
+        """Returns the inertia matrix in task space for the controlled DOF.
+        In case of mobile robots the floating base is accounted for by an offset.
+
+        Parameters
+        ----------
+        q: float numpy.array, optional (Default: None)
+            The joint angles of the robot. 
         """
         # get_mass_matrices returns (num_envs, joint_count, joint_count)
-        self._MNN= self.articulation_view.get_mass_matrices()[0]
+        self._MNN= self.articulation_view.get_mass_matrices()[self.env_idx]
         # apply offset for non-fixed base (mobile robots)
         indices = self.dof_indices + self.base_offset
         M = self._MNN[np.ix_(indices, indices)]
@@ -254,7 +232,7 @@ class IsaacsimConfig:
         
     def R(self, name, q=None):
         """
-        Returns the rotation matrix of the specified object in Isaac Sim.
+        Returns the rotation matrix of the specified object in IsaacSim.
         
         Parameters
         ----------
@@ -263,8 +241,7 @@ class IsaacsimConfig:
         q : np.ndarray, optional
             Joint positions (not used here unless you want to simulate a different state).
         """
-        prim_path = self._get_prim_path(name)
-        prim = self.stage.GetPrimAtPath(prim_path)
+        prim = self._get_prim(name)
         if not prim.IsValid():
             raise RuntimeError(f"Prim '{prim_path}' not found")
                 
@@ -272,31 +249,27 @@ class IsaacsimConfig:
         matrix = omni.usd.get_world_transform_matrix(prim)
 
         # Convert to 3x3 rotation matrix using numpy
-        R = np.array([
+        self._R = np.array([
             [matrix[0][0], matrix[0][1], matrix[0][2]],
             [matrix[1][0], matrix[1][1], matrix[1][2]],
             [matrix[2][0], matrix[2][1], matrix[2][2]]
         ])
 
-        return R
-            
+        return self._R  
         
 
     def quaternion(self, name, q=None):
-        """Returns the quaternion
+        """Returns the quaternion of the specified prim.
         Parameters
         ----------
 
         name: string
-            The name of the Mujoco body to retrieve the Jacobian for
+            The name of the IsaacSim prim to retrieve the Jacobian for
         q: float numpy.array, optional (Default: None)
-            The joint angles of the robot. If None the current state is
-            retrieved from the Mujoco simulator
+            The joint angles of the robot. 
         """
         if name == "EE": name = self.ee_link_name
-
-        prim_path = self._get_prim_path(name)
-        prim = self.stage.GetPrimAtPath(prim_path)
+        prim = self._get_prim(name)
 
         # Get 4x4 world transform matrix
         matrix = omni.usd.get_world_transform_matrix(prim)
@@ -309,20 +282,19 @@ class IsaacsimConfig:
     def C(self):
         """NOTE: The Coriolis and centrifugal effects are neglected atm, as this method is not called anywhere
         """
-        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.dof_indices)[0]
+        coriolis = self.articulation_view.get_coriolis_and_centrifugal_forces(joint_indices=self.dof_indices)[self.env_idx]
         return coriolis
 
 
     def T(self, name, q=None, x=None):
-        """Get the transform matrix.
+        """Returns the transform matrix of the specified prim.
 
         Parameters
         ----------
         name: string
-            The name of the Mujoco body to retrieve the Jacobian for
+            The name of the prim to retrieve the transform matrix from.
         q: float numpy.array, optional (Default: None)
-            The joint angles of the robot. If None the current state is
-            retrieved from the Mujoco simulator
+            The joint angles of the robot.
         x: float numpy.array, optional (Default: None)
         """
         # TODO if ever required
@@ -330,29 +302,36 @@ class IsaacsimConfig:
 
 
     def Tx(self, name, q=None, x=None):
-        """Simplified version that only gets current position without state changes."""
+        """Simplified version of T. 
+        Returns the position without state changes of the specified prim.
+
+        Parameters
+        ----------
+        name: string
+            The name of the prim to retrieve the position from.
+        q: float numpy.array, optional (Default: None)
+            The joint angles of the robot. 
+        x: float numpy.array, optional (Default: None)
+        """
         if name == "EE": name = self.ee_link_name
-        prim_path = self._get_prim_path(name)
-        prim = self.stage.GetPrimAtPath(prim_path)
+        prim = self._get_prim(name)
         if not prim.IsValid():
             raise RuntimeError(f"Invalid prim at path: {prim_path}")
         
         matrix = omni.usd.utils.get_world_transform_matrix(prim)
         position = matrix.ExtractTranslation()
-
         return np.array([position[0], position[1], position[2]], dtype=np.float64)
 
 
     def T_inv(self, name, q=None, x=None):
-        """Get the inverse transform matrix.
+        """Returns the inverse of the transform matrix of the specified prim.
 
         Parameters
         ----------
         name: string
-            The name of the Mujoco body to retrieve the Jacobian for
+            The name of the prim to retrieve the inverse from.
         q: float numpy.array, optional (Default: None)
-            The joint angles of the robot. If None the current state is
-            retrieved from the Mujoco simulator
+            The joint angles of the robot.
         x: float numpy.array, optional (Default: None)
         """
         # TODO if ever required
@@ -364,22 +343,28 @@ class IsaacsimConfig:
             if str(prim.GetPath()).endswith(name):
                 return prim.GetPath()
         return None
+    
+    def _get_prim(self, name):
+        prim_path = self._get_prim_path(name)
+        prim = self.stage.GetPrimAtPath(prim_path)
+        return prim
+
             
     def _get_joint_positions(self):
-        full_positions = self.articulation_view.get_joint_positions()[0]
+        full_positions = self.articulation_view.get_joint_positions()[self.env_idx]
         return full_positions[self.dof_indices]
     
     def _get_joint_velocities(self):
-        full_velocities = self.articulation_view.get_joint_velocities()[0]
+        full_velocities = self.articulation_view.get_joint_velocities()[self.env_idx]
         return full_velocities[self.dof_indices]
 
     def _set_joint_positions(self, q):
-        full_positions = self.articulation_view.get_joint_positions()[0]
+        full_positions = self.articulation_view.get_joint_positions()[self.env_idx]
         full_positions[self.dof_indices] = q
         self.articulation_view.set_joint_positions(full_positions)
     
     def _set_joint_velocities(self, dq):
-        full_velocities = self.articulation_view.get_joint_velocities()[0]
+        full_velocities = self.articulation_view.get_joint_velocities()[self.env_idx]
         full_velocities[self.dof_indices] = dq
         self.articulation_view.set_joint_velocities(full_velocities)
 

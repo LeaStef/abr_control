@@ -7,7 +7,6 @@ In this example, the floating controller is applied in the joint space
 """
 import sys
 import traceback
-
 import numpy as np
 from abr_control.arms.isaacsim_config import IsaacsimConfig as arm
 from abr_control.controllers import Floating
@@ -15,16 +14,13 @@ from abr_control.interfaces.nv_isaacsim import IsaacSim
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "h1_hands"
-    #arm_model = "jaco2"
+    arm_model = "ur5"
 robot_config = arm(arm_model)
-interface = IsaacSim(robot_config, dt = 0.007)
+dt = 0.005
+interface = IsaacSim(robot_config, dt)
 interface.connect(joint_names=robot_config.controlled_dof)
 
-
-
 interface.send_target_angles(robot_config.START_ANGLES)
-interface.set_gains_force_control()
 
 # instantiate the controller
 ctrlr = Floating(robot_config, task_space=False, dynamic=True)
@@ -47,7 +43,6 @@ try:
 
         # send forces into Isaacsim
         interface.send_forces(u)
-        #interface.world.step(render=True)
 
         # calculate the position of the hand
         hand_xyz = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
