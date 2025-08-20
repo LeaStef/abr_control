@@ -21,8 +21,7 @@ n_targets = 100
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "jaco2"
-# initialize our robot config for the jaco2
+    arm_model = "jaco2" # works with jaco2 / ur5 
 robot_config = arm(arm_model)
 
 ctrlr_dof = [True, True, True, False, False, False]
@@ -32,16 +31,14 @@ stars = "*" * len(dof_print)
 print(stars)
 print(dof_print)
 print(stars)
-dt = 0.007  # 143 Hz 
-#dt = 0.001 # 1000 Hz
+dt = 0.005 # 200 Hz
 target_prim_path="/World/target"
 
 # create our interface
-interface = IsaacSim(robot_config, dt=dt)
+interface = IsaacSim(robot_config, dt)
 interface.connect()
 interface.send_target_angles(robot_config.START_ANGLES)
 isaac_target = interface.create_target_prim(prim_path=target_prim_path)
-interface.fix_arm_joint_gains()
 
 # damp the movements of the arm
 damping = Damping(robot_config, kv=10)
@@ -66,35 +63,17 @@ ee_track = []
 target_track = []
 
 
-
-
-
-
-
-
-
-
-
-
 print("\nSimulation starting...\n")
 for ii in range(0, n_targets):
         feedback = interface.get_feedback()
-        hand_xyz = robot_config.Tx("EE", feedback["q"])
-
-        pos_target = np.array(
-            [
-                np.random.uniform(low=-0.4, high=0.4),
-                np.random.uniform(low=-0.4, high=0.4),
-                np.random.uniform(low=0.3, high=0.6),
-            ]
-        )
-
+        hand_xyz = robot_config.Tx(robot_config.ee_link_name, feedback["q"])
+        pos_target = interface.create_random_pos()
         path_planner.generate_path(
             start_position=hand_xyz, target_position=pos_target, max_velocity=2
         )
 
-        #interface.set_xyz("target", pos_target)
-        interface.set_xyz(target_prim_path, pos_target)
+        interface.set_xyz("target", pos_target)
+        #interface.set_xyz(target_prim_path, pos_target)
         at_target = 0
         count = 0
 
@@ -103,10 +82,9 @@ for ii in range(0, n_targets):
                 break
             filtered_target = path_planner.next()
             interface.set_xyz(target_prim_path, filtered_target[:3])
-            #interface.set_xyz("target_orientation", filtered_target[:3])
 
             feedback = interface.get_feedback()
-            hand_xyz = robot_config.Tx("EE", feedback["q"])
+            hand_xyz = robot_config.Tx(robot_config.ee_link_name, feedback["q"])
 
             u = ctrlr.generate(
                 q=feedback["q"],
@@ -128,26 +106,11 @@ for ii in range(0, n_targets):
             count += 1
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 try:
     print("\nSimulation starting...\n")
     for ii in range(0, n_targets):
         feedback = interface.get_feedback()
-        hand_xyz = robot_config.Tx("EE", feedback["q"])
+        hand_xyz = robot_config.Tx(robot_config.ee_link_name, feedback["q"])
 
         pos_target = np.array(
             [
@@ -174,7 +137,7 @@ try:
             #interface.set_xyz("target_orientation", filtered_target[:3])
 
             feedback = interface.get_feedback()
-            hand_xyz = robot_config.Tx("EE", feedback["q"])
+            hand_xyz = robot_config.Tx(robot_config.ee_link_name, feedback["q"])
 
             u = ctrlr.generate(
                 q=feedback["q"],

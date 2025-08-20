@@ -15,10 +15,10 @@ from abr_control.utils import transformations
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "ur5" # "h1_hands" / "h1" / jaco2 / ur5
+    arm_model = "h1" # works with "h1_hands" / "h1" / jaco2 / ur5
 robot_config = arm(arm_model)
 
-dt = 0.005
+dt = 0.005 # 200 Hz
 target_name="target"
 
 # create our IsaacSim interface
@@ -51,10 +51,7 @@ np.random.seed(0)
 try:
     # get the end-effector's initial position
     feedback = interface.get_feedback()
-    start = robot_config.Tx(robot_config.ee_link_name, feedback["q"])
-    
-    # make the target offset from that start position
-    interface.set_target_random()
+    interface.set_xyz("target", interface.create_random_pos())
 
     count = 0
     print("\nSimulation starting...\n")

@@ -157,7 +157,7 @@ class IsaacSim(Interface):
     def set_xyz(self, name, xyz):
         """Set the position of an object in the environment.
 
-        prim_path : string
+        name : string
             the prim_path of the prim
         xyz : np.array
             the [x,y,z] location of the target [meters]
@@ -165,6 +165,23 @@ class IsaacSim(Interface):
         prim = self.robot_config._get_prim(name)
         xformable = UsdGeom.Xformable(prim)
         transform_matrix = Gf.Matrix4d().SetTranslate(Gf.Vec3d(xyz[0], xyz[1], xyz[2]))
+        xformable.MakeMatrixXform().Set(transform_matrix)
+
+
+    def set_orientation(self, name, quat_wxyz):
+        """Set the position of an object in the environment.
+
+        name : string
+            the prim_path of the prim
+        quat_wxyz : np.array
+            the [w,x,y,z] quaternion representation of the target orientation
+        """     
+        prim = self.robot_config._get_prim(name)
+        xformable = UsdGeom.Xformable(prim)
+        quat = Gf.Quatd(quat_wxyz[0], Gf.Vec3d(quat_wxyz[1],
+                                           quat_wxyz[2],
+                                           quat_wxyz[3]))
+        transform_matrix = Gf.Matrix4d().SetRotate(quat)
         xformable.MakeMatrixXform().Set(transform_matrix)
     
 
@@ -200,12 +217,16 @@ class IsaacSim(Interface):
         cube_prim.GetPrim().CreateAttribute("physics:collisionEnabled", Sdf.ValueTypeNames.Bool).Set(False)
         return cube_prim
     
-
-    def set_target_random(self, name="target"):
-        target_min = self.robot_config.target_min
-        target_range = self.robot_config.target_range
-        target_xyz = target_min + np.random.rand(3) * target_range
-        self.set_xyz(name, target_xyz)
+    
+    def create_random_pos(self):
+        pos_target = np.array(
+            [
+                np.random.uniform(low=self.robot_config.target_min[0], high=self.robot_config.target_max[0]),
+                np.random.uniform(low=self.robot_config.target_min[1], high=self.robot_config.target_max[1]),
+                np.random.uniform(low=self.robot_config.target_min[2], high=self.robot_config.target_max[2]),
+            ]
+        )
+        return pos_target
 
 
     # setting max_force via PhysX DriveAPI

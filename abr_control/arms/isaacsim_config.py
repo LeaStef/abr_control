@@ -15,7 +15,6 @@ class IsaacsimConfig:
         robot_type: string
             the name of the arm model to load. 
         """
-
         self.robot_type = robot_type
         self.env_idx = 0  # Assuming only one robot
         self.ee_link_name = "EE"  # name used for virtual end-effector, overwritten if one exists already
@@ -26,8 +25,8 @@ class IsaacsimConfig:
             self.EE_parent_link = "wrist_3_link"  
             self.ee_offset=[0., 0., 0.] 
             START_ANGLES = "0 -.67 -.67 0 0 0"
-            self.target_min = np.array([-0.6, -0.5, 0.5])
-            self.target_range = np.array([0.9, 1.1, 0.3])
+            self.target_min = np.array([-0.4, -0.4, 0.3]) # np.array([-0.6, -0.5, 0.5])
+            self.target_max = np.array([0.4, 0.4, 0.6]) 
             self.controlled_dof = ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached, as robot has none.")
 
@@ -37,8 +36,8 @@ class IsaacsimConfig:
             self.EE_parent_link = "j2n6s300_link_6"  
             self.ee_link_name = "j2n6s300_end_effector"  
             START_ANGLES = "2.0 3.14 1.57 4.71 0.0 3.04"
-            self.target_min = np.array([-0.5, -0.5, 0.5])
-            self.target_range = [1, 1, 0.5]
+            self.target_min = np.array([-0.4, -0.4, 0.3]) # np.array([-0.5, -0.5, 0.5])
+            self.target_max = np.array([0.4, 0.4, 0.6]) 
             self.controlled_dof = ['j2n6s300_joint_1', 'j2n6s300_joint_2', 'j2n6s300_joint_3', 'j2n6s300_joint_4', 'j2n6s300_joint_5', 'j2n6s300_joint_6']
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
                 
@@ -49,11 +48,7 @@ class IsaacsimConfig:
             self.ee_offset=[0.26455, 0.00118, -0.0209] # for H1 
             START_ANGLES = "0. 0. 0. 0."
             self.target_min = np.array([0.12, -0.4, 1.4])
-            self.target_range = np.array([
-                0.4 - 0.12,  # x range
-                0.05 - (-0.4), # y range
-                2.2 - 1.4     # z range
-            ])
+            self.target_max = np.array([0.4, 0.05, 2.2]) 
             self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint']
             self.lock_prim_standing = '/World/robot/pelvis'
             print(f"Virtual end effector with name '{self.ee_link_name}' is attached, as robot has none.")
@@ -65,11 +60,7 @@ class IsaacsimConfig:
             self.ee_link_name = "right_hand_link"  
             START_ANGLES = "0. 0. 0. 0. 0."
             self.target_min = np.array([0.12, -0.4, 1.4])
-            self.target_range = np.array([
-                0.49 - 0.12,  # x range
-                0.05 - (-0.4), # y range
-                2.2 - 1.4     # z range
-            ])
+            self.target_max = np.array([0.49, 0.05, 2.2]) 
             self.controlled_dof = ['right_shoulder_pitch_joint','right_shoulder_roll_joint', 'right_shoulder_yaw_joint','right_elbow_joint','right_hand_joint']
             self.lock_prim_standing = '/World/robot/pelvis'
             print(f"End effector with name '{self.ee_link_name}' specified in UDS, using it ...")
