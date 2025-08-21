@@ -15,7 +15,7 @@ from abr_control.utils import transformations
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "h1" # works with "h1_hands" / "h1" / jaco2 / ur5
+    arm_model = "ur5" # works with "h1_hands" / "h1" / jaco2 / ur5
 robot_config = arm(arm_model)
 
 dt = 0.005 # 200 Hz
@@ -44,9 +44,7 @@ target_track = []
 
 green = [0, 0.9, 0, 0.5]
 red = [0.9, 0, 0, 0.5]
-
 np.random.seed(0)
-
 
 try:
     # get the end-effector's initial position
@@ -73,9 +71,7 @@ try:
             dq=feedback["dq"],
             target=target,
         )
-
         interface.send_forces(u)
-        #interface.world.step(render=True)
 
         # calculate end-effector position
         ee_xyz = robot_config.Tx(robot_config.ee_link_name, q=feedback["q"])
@@ -90,7 +86,7 @@ try:
             count = 0
         if count >= 50:
             print("Generating a new target")
-            interface.set_target_random()
+            interface.set_xyz("target", interface.create_random_pos())
             count = 0
 
 except:
