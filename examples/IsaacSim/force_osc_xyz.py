@@ -3,6 +3,9 @@ Move the jaco2 IsaacSim arm to a target position.
 The simulation ends after 1500 time steps, and the
 trajectory of the end-effector is plotted in 3D.
 """
+from isaacsim import SimulationApp
+# Initialize simulation app before importing other Isaac Sim modules
+simulation_app = SimulationApp({"headless": False})
 import sys
 import traceback
 import numpy as np
@@ -15,14 +18,14 @@ from abr_control.utils import transformations
 if len(sys.argv) > 1:
     arm_model = sys.argv[1]
 else:
-    arm_model = "ur5" # works with "h1_hands" / "h1" / jaco2 / ur5
+    arm_model = "h1" # works with "h1_hands" / "h1" / jaco2 / ur5
 robot_config = arm(arm_model)
 
 dt = 0.005 # 200 Hz
 target_name="target"
 
 # create our IsaacSim interface
-interface = IsaacSim(robot_config, dt)
+interface = IsaacSim(simulation_app,robot_config, dt)
 interface.connect()
 interface.send_target_angles(robot_config.START_ANGLES)
 isaac_target = interface.create_target_prim()

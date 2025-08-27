@@ -5,21 +5,14 @@ It extends the base Interface class to provide Isaac Sim specific functionality.
 """
 
 import numpy as np
-from isaacsim import SimulationApp
+
 from .interface import Interface
 
+#from isaacsim import SimulationApp
 # Initialize simulation app before importing other Isaac Sim modules
-simulation_app = SimulationApp({"headless": False})
+#simulation_app = SimulationApp({"headless": False})
 
-import omni
-import omni.kit.commands  # type: ignore
-import isaacsim.core.utils.stage as stage_utils  # type: ignore
-from omni.isaac.core import World  # type: ignore
-from omni.isaac.core.articulations import ArticulationView  # type: ignore
-from isaacsim.core.api.robots import Robot  # type: ignore
-from pxr import UsdGeom, Gf, UsdShade, Sdf, UsdPhysics  # type: ignore
-from isaacsim.core.utils.nucleus import get_assets_root_path  # type: ignore
-import isaacsim.core.utils.numpy.rotations as rot_utils  # type: ignore
+
 
 
 class IsaacSim(Interface):
@@ -54,7 +47,7 @@ class IsaacSim(Interface):
         Indices of joints being controlled
     """
 
-    def __init__(self, robot_config, dt=0.001):
+    def __init__(self, simulation_app, robot_config, dt=0.001):
         """Initialize the Isaac Sim interface.
         
         Parameters
@@ -65,6 +58,7 @@ class IsaacSim(Interface):
             Simulation time step in seconds. Default is 0.001.
         """
         super().__init__(robot_config)
+        self.simulation_app = simulation_app
         self.robot_config = robot_config
         self.dt = dt
         self.prim_path = "/World/robot"
@@ -95,6 +89,15 @@ class IsaacSim(Interface):
         Exception
             If a specified joint name does not exist in the robot model.
         """
+        import omni
+        import omni.kit.commands  # type: ignore
+        import isaacsim.core.utils.stage as stage_utils  # type: ignore
+        from omni.isaac.core import World  # type: ignore
+        from omni.isaac.core.articulations import ArticulationView  # type: ignore
+        from isaacsim.core.api.robots import Robot  # type: ignore
+        
+        from isaacsim.core.utils.nucleus import get_assets_root_path  # type: ignore
+        import isaacsim.core.utils.numpy.rotations as rot_utils  # type: ignore
         # Initialize the simulation world
         self.world = World(
             stage_units_in_meters=1.0,
@@ -259,6 +262,7 @@ class IsaacSim(Interface):
         xyz : numpy.ndarray
             The [x, y, z] location of the target in meters
         """
+        from pxr import UsdGeom, Gf # type: ignore
         prim = self.robot_config._get_prim(name)
         xformable = UsdGeom.Xformable(prim)
         transform_matrix = Gf.Matrix4d().SetTranslate(
@@ -276,6 +280,7 @@ class IsaacSim(Interface):
         quat_wxyz : numpy.ndarray
             The [w, x, y, z] quaternion representation of the target orientation
         """
+        from pxr import UsdGeom, Gf # type: ignore
         prim = self.robot_config._get_prim(name)
         xformable = UsdGeom.Xformable(prim)
         quat = Gf.Quatd(
@@ -286,6 +291,7 @@ class IsaacSim(Interface):
         xformable.MakeMatrixXform().Set(transform_matrix)
 
     def keep_standing(self, dt):
+        from pxr import Gf # type: ignore
         """Physics callback to keep humanoid robots upright.
         
         This method is used as a physics callback to prevent humanoid
@@ -318,6 +324,7 @@ class IsaacSim(Interface):
         UsdGeom.Cube
             The created cube primitive
         """
+        from pxr import UsdGeom, Gf, UsdShade, Sdf# type: ignore
         # Create cube geometry
         cube_prim = UsdGeom.Cube.Define(self.stage, prim_path)
         cube_prim.CreateSizeAttr(size)
@@ -382,6 +389,7 @@ class IsaacSim(Interface):
         value : float
             Maximum force value to set
         """
+        from pxr import UsdPhysics  # type: ignore
         prim = self.robot_config._get_prim(name)
         # Apply the DriveAPI if not already present
         # Use "linear" for prismatic joints, "angular" for revolute joints
@@ -422,6 +430,7 @@ class IsaacSim(Interface):
         offset : numpy.ndarray or list
             [x, y, z] offset from parent link in meters
         """
+        from pxr import UsdGeom, Gf # type: ignore
         parent_path = f"{self.prim_path}/{EE_parent_link}"
         # Full path to the new EE transform, nested under parent
         ee_prim_path = f"{parent_path}/{ee_name}"
