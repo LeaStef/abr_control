@@ -5,15 +5,7 @@ It extends the base Interface class to provide Isaac Sim specific functionality.
 """
 
 import numpy as np
-
 from .interface import Interface
-
-#from isaacsim import SimulationApp
-# Initialize simulation app before importing other Isaac Sim modules
-#simulation_app = SimulationApp({"headless": False})
-
-
-
 
 class IsaacSim(Interface):
     """An interface for Isaac Sim simulation environment.
@@ -47,7 +39,8 @@ class IsaacSim(Interface):
         Indices of joints being controlled
     """
 
-    def __init__(self, simulation_app, robot_config, dt=0.001):
+    def __init__(self, simulation_app, robot_config, dt=0.001, robot_prim_path = None): 
+        #world_prim_path = '/World'
         """Initialize the Isaac Sim interface.
         
         Parameters
@@ -61,10 +54,12 @@ class IsaacSim(Interface):
         self.simulation_app = simulation_app
         self.robot_config = robot_config
         self.dt = dt
-        self.prim_path = "/World/robot"
+        if robot_prim_path is not None:
+            self.prim_path = robot_prim_path
+        else:
+            self.prim_path = "/World/robot"
 
         # Initialize attributes that will be set during connection
-        self.world = None
         self.articulation_view = None
         self.context = None
         self.stage = None
@@ -97,33 +92,38 @@ class IsaacSim(Interface):
         from isaacsim.core.api.robots import Robot  # type: ignore
         
         from isaacsim.core.utils.nucleus import get_assets_root_path  # type: ignore
-        import isaacsim.core.utils.numpy.rotations as rot_utils  # type: ignore
-        # Initialize the simulation world
-        self.world = World(
-            stage_units_in_meters=1.0,
-            physics_dt=self.dt,
-            rendering_dt=self.dt
-        )
-        self.world.scene.add_default_ground_plane()
+        self.world = World.instance() 
+        if self.world is None:
+            print("No existing World found. Creating one...")
+            # Initialize the simulation world
+            self.world = World(
+                stage_units_in_meters=1.0,
+                physics_dt=self.dt,
+                rendering_dt=self.dt
+            )
+            self.world.scene.add_default_ground_plane()
+            
+            # Load the robot from USD file
+            assets_root_path = get_assets_root_path()
+            robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
+            print(f"Robot '{self.robot_config.robot_type}' is loaded from USD path: {robot_usd_path}")
+
+            # Add robot to the stage
+            stage_utils.add_reference_to_stage(
+                usd_path=robot_usd_path,
+                prim_path=self.prim_path,
+            )
+            robot = self.world.scene.add(
+                Robot(prim_path=self.prim_path, name=self.robot_config.robot_type)
+            )
+
+            # Reset world to ensure proper initialization
+            self.world.reset()
+        else:
+            print("Using existing World.")
+
         self.context = omni.usd.get_context()
         self.stage = self.context.get_stage()
-
-        # Load the robot from USD file
-        assets_root_path = get_assets_root_path()
-        robot_usd_path = f"{assets_root_path}{self.robot_config.robot_path}"
-        print(f"Robot '{self.robot_config.robot_type}' is loaded from USD path: {robot_usd_path}")
-
-        # Add robot to the stage
-        stage_utils.add_reference_to_stage(
-            usd_path=robot_usd_path,
-            prim_path=self.prim_path,
-        )
-        robot = self.world.scene.add(
-            Robot(prim_path=self.prim_path, name=self.robot_config.robot_type)
-        )
-
-        # Reset world to ensure proper initialization
-        self.world.reset()
 
         # Create and initialize articulation view
         self.articulation_view = ArticulationView(
