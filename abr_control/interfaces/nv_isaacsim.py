@@ -39,7 +39,7 @@ class IsaacSim(Interface):
         Indices of joints being controlled
     """
 
-    def __init__(self, simulation_app, robot_config, dt=0.001, robot_prim_path = None): 
+    def __init__(self, simulation_app, robot_config, dt=0.001, robot_prim_path = None, articulation_view = None): 
         #world_prim_path = '/World'
         """Initialize the Isaac Sim interface.
         
@@ -60,7 +60,7 @@ class IsaacSim(Interface):
             self.prim_path = "/World/robot"
 
         # Initialize attributes that will be set during connection
-        self.articulation_view = None
+        self.articulation_view = articulation_view
         self.context = None
         self.stage = None
         self.dof_indices = []
@@ -124,14 +124,15 @@ class IsaacSim(Interface):
 
         self.context = omni.usd.get_context()
         self.stage = self.context.get_stage()
+        if self.articulation_view is None:
+            # Create and initialize articulation view
+            self.articulation_view = ArticulationView(
+                prim_paths_expr=self.prim_path,
+                name=self.robot_config.robot_type + "_view"
+            )
+            self.world.scene.add(self.articulation_view)
+            self.articulation_view.initialize()
 
-        # Create and initialize articulation view
-        self.articulation_view = ArticulationView(
-            prim_paths_expr=self.prim_path,
-            name=self.robot_config.robot_type + "_view"
-        )
-        self.world.scene.add(self.articulation_view)
-        self.articulation_view.initialize()
 
         # Add virtual end-effector if robot doesn't have one
         if not self.robot_config.has_EE:
@@ -302,7 +303,8 @@ class IsaacSim(Interface):
         dt : float
             Time step (automatically passed by physics callback system)
         """
-        prim = self.stage.GetPrimAtPath(self.robot_config.lock_prim_standing)
+        prim_path = self.prim_path + "/pelvis"
+        prim = self.stage.GetPrimAtPath(prim_path)
         prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0, 0.0, 0.0, 0.0))
         prim.GetAttribute("xformOp:translate").Set(Gf.Vec3f(0.0, 0.0, 1.4))
 

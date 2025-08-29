@@ -131,7 +131,6 @@ class IsaacsimConfig:
             'right_shoulder_pitch_joint', 'right_shoulder_roll_joint',
             'right_shoulder_yaw_joint', 'right_elbow_joint'
         ]
-        self.lock_prim_standing = '/World/robot/pelvis'
         print(f"Virtual end effector '{self.ee_link_name}' will be attached "
               f"(robot has no physical EE).")
 
@@ -148,7 +147,6 @@ class IsaacsimConfig:
             'right_shoulder_pitch_joint', 'right_shoulder_roll_joint',
             'right_shoulder_yaw_joint', 'right_elbow_joint', 'right_hand_joint'
         ]
-        self.lock_prim_standing = '/World/robot/pelvis'
         print(f"End effector '{self.ee_link_name}' found in USD, using existing EE.")
 
     def _connect(self, world, stage, articulation_view, dof_indices, 
