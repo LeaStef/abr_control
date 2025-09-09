@@ -416,7 +416,8 @@ class IsaacSim(Interface):
             damping[idx] = 0.1
 
         self.articulation_view.set_gains(stiffness, damping)
-
+    
+    
     def add_virtual_ee_link(self, EE_parent_link, ee_name, offset):
         """Add a virtual end-effector link as an Xform under the parent link.
 
@@ -433,12 +434,18 @@ class IsaacSim(Interface):
             [x, y, z] offset from parent link in meters
         """
         from pxr import UsdGeom, Gf # type: ignore
+
         parent_path = f"{self.prim_path}/{EE_parent_link}"
-        # Full path to the new EE transform, nested under parent
         ee_prim_path = f"{parent_path}/{ee_name}"
-        
-        # Create the Xform prim
+
         ee_prim = UsdGeom.Xform.Define(self.stage, ee_prim_path)
-        
-        # Set transform relative to parent
-        ee_prim.AddTranslateOp().Set(Gf.Vec3d(*offset))
+        xformable = UsdGeom.Xformable(ee_prim)
+
+        # Look for existing translate op
+        ops = xformable.GetOrderedXformOps()
+        translate_ops = [op for op in ops if op.GetOpName() == "xformOp:translate"]
+
+        if translate_ops:
+            translate_ops[0].Set(Gf.Vec3d(*offset))
+        else:
+            xformable.AddTranslateOp().Set(Gf.Vec3d(*offset))
